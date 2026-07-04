@@ -122,7 +122,7 @@ The server exposes five MCP tools:
 | `feed` | Dispense food. Takes `pets` (name, list of names, or `"all"`) and `cups`. Refuses to exceed `max_cups_per_command` unless `force=true`. |
 | `open_lid` | Force the RFID lid open on one, several, or all feeders. |
 | `feeder_status` | Food level, battery, online state, and today's feeding total for one feeder or all of them. |
-| `fountain_status` | Raw status payload for one fountain or all fountains. |
+| `fountain_status` | Water level %, water state, pump, filter/cleaning days remaining, and battery for one fountain or all. |
 | `list_devices` | Configured feeders/fountains plus the live cloud device list — useful for spotting a serial mismatch. |
 
 Example prompts once the server is registered with Claude:
@@ -198,9 +198,6 @@ config itself) out of git.
 
 ## Known gaps (deferred, not stubbed)
 
-- `fountain_status` currently returns the raw cloud payload (`realInfo`)
-  rather than named fields (water level, pump state, filter life) — pending
-  seeing a real fountain payload to map the exact keys.
 - Schedule editing, fountain pump control, and RFID visit history
   (`recent_visits`) are not implemented.
 

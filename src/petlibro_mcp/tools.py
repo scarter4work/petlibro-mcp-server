@@ -79,6 +79,32 @@ async def feeder_status(config: Config, client: PetLibroClient,
     return results
 
 
+def _shape_fountain(f, info: dict) -> dict:
+    """Extract the human-useful fields from a fountain's raw realInfo payload.
+
+    Keys confirmed against live Dockstream RFID Smart Fountain payloads. A
+    negative *_days_remaining means the filter/cleaning cycle is overdue.
+    """
+    return {
+        "fountain": f.name,
+        "serial": f.serial,
+        "near": f.near,
+        "ok": True,
+        "online": info.get("online"),
+        "water_level_percent": info.get("weightPercent"),
+        "water_weight_g": info.get("weight"),
+        "water_state": info.get("weightState"),          # NORMAL / LACK_WATER
+        "running_state": info.get("runningState"),
+        "water_dispensed_today_ml": info.get("todayTotalMl"),
+        "pump_on": info.get("pumpAirState"),
+        "filter_days_remaining": info.get("remainingReplacementDays"),
+        "cleaning_days_remaining": info.get("remainingCleaningDays"),
+        "battery_state": info.get("batteryState"),
+        "error": info.get("errorState"),
+        "message": info.get("exceptionMessage"),         # present only on a fault
+    }
+
+
 async def fountain_status(config: Config, client: PetLibroClient,
                           name=None) -> list[dict]:
     try:
@@ -89,8 +115,7 @@ async def fountain_status(config: Config, client: PetLibroClient,
     for f in fountains:
         try:
             info = await client.real_info(f.serial)
-            results.append({"fountain": f.name, "serial": f.serial,
-                            "near": f.near, "raw": info, "ok": True})
+            results.append(_shape_fountain(f, info))
         except Exception as exc:
             results.append({"fountain": f.name, "serial": f.serial,
                             "ok": False,

@@ -92,6 +92,26 @@ async def test_fountain_status_reports_failure(client):
     assert "offline" in res[0]["error"]
 
 
+async def test_fountain_status_maps_named_fields(client):
+    # payload shape confirmed against a live Dockstream fountain
+    client.real_info = AsyncMock(return_value={
+        "online": True, "weightPercent": 23, "weight": 669.0,
+        "weightState": "LACK_WATER", "runningState": "LACK_WATER",
+        "todayTotalMl": 0, "pumpAirState": True,
+        "remainingReplacementDays": -139, "remainingCleaningDays": -94,
+        "batteryState": "low", "errorState": False,
+        "exceptionMessage": "Insufficient water",
+    })
+    r = (await tools.fountain_status(cfg(), client, "dockstream1"))[0]
+    assert r["ok"] is True
+    assert r["water_level_percent"] == 23
+    assert r["water_state"] == "LACK_WATER"
+    assert r["filter_days_remaining"] == -139
+    assert r["pump_on"] is True
+    assert r["message"] == "Insufficient water"
+    assert "raw" not in r
+
+
 async def test_feeder_status_unknown_pet_reports_error(client):
     res = await tools.feeder_status(cfg(), client, "mittens")
     assert res[0]["ok"] is False
