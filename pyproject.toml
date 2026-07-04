@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "petlibro-mcp-server"
+version = "0.1.0"
+description = "MCP server for PetLibro RFID feeders and Dockstream fountains."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "scarter4work" }]
+dependencies = [
+  "mcp>=1.9.0",
+  "aiohttp>=3.9",
+  "async-timeout>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+petlibro-mcp = "petlibro_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/petlibro_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
