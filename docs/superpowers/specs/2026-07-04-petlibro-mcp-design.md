@@ -61,10 +61,11 @@ petlibro/
   login -> token), device discovery, the manual-feed endpoint, and device
   attribute reads. Treated as an external dependency we happen to carry in-tree;
   minimal edits, only what's needed to run standalone (strip Home Assistant
-  imports).
+  imports). Also owns the manual lid-open command if the API exposes one.
 - **`client.py`** — our clean async facade over `vendored/api.py`. Exposes only
   what the tools need: `login()`, `list_devices()`, `feed(serial, portions)`,
-  `feeder_status(serial)`, `fountain_status(serial)`. Normalizes the vendored
+  `open_lid(serial)`, `feeder_status(serial)`, `fountain_status(serial)`.
+  Normalizes the vendored
   client's raw dicts into small typed result objects.
 - **`config.py`** — loads `pets.toml` (the map below) and reads credentials from
   env. Provides `resolve(names) -> [FeederConfig]` and `cups_to_portions(feeder,
@@ -166,6 +167,18 @@ near = ["saffron", "ricco", "ferris", "colby"]
 - One fountain (by name) or both. Returns water level, pump on/off, filter life
   remaining.
 
+### `open_lid(pets)`
+- `pets`: list of pet names, or `"all"`.
+- Forces the RFID lid open on the named feeder(s) regardless of chip — lets any
+  pet eat from that bowl, or opens it for cleaning/inspection.
+- Resolves names -> serials, calls `client.open_lid(serial)`.
+- Returns a per-pet result list `{pet, ok, error?}`, same partial-success
+  reporting as `feed`.
+- **Depends on the cloud API exposing a manual lid command for these feeders.**
+  Confirmed during build by reading the vendored client; if unsupported for this
+  feeder model, the tool is dropped from V1 and the limitation is documented
+  loudly (not silently stubbed).
+
 ## Data flow: "feed ferris 3 cups"
 
 1. Claude parses the sentence, calls `feed(pets=["ferris"], cups=3)`.
@@ -197,6 +210,7 @@ near = ["saffron", "ricco", "ferris", "colby"]
   overfeed guard math.
 - `test_tools.py`: `feed` with a mocked client — single pet, multi pet, "all",
   overfeed refusal, `force=true` bypass, partial failure reporting, unknown name.
+  `open_lid` — single pet, "all", partial failure, unknown name.
 - Live API calls are NOT exercised in unit tests (mocked). A manual smoke script
   (`scripts/smoke.py`, git-ignored creds) verifies login + `list_devices`
   against the real account once, by hand.
