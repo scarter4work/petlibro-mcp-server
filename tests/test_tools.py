@@ -90,3 +90,27 @@ async def test_fountain_status_reports_failure(client):
     assert len(res) == 1
     assert res[0]["ok"] is False
     assert "offline" in res[0]["error"]
+
+
+async def test_feeder_status_unknown_pet_reports_error(client):
+    res = await tools.feeder_status(cfg(), client, "mittens")
+    assert res[0]["ok"] is False
+    assert "mittens" in res[0]["error"]
+    client.real_info.assert_not_awaited()
+
+
+async def test_fountain_status_unknown_name_reports_error(client):
+    res = await tools.fountain_status(cfg(), client, "nope")
+    assert res[0]["ok"] is False
+    assert "nope" in res[0]["error"]
+    client.real_info.assert_not_awaited()
+
+
+async def test_feed_rejects_nonpositive_cups(client):
+    res = await tools.feed(cfg(), client, ["ferris"], 0)
+    assert res[0]["ok"] is False
+    client.feed.assert_not_awaited()
+
+    res = await tools.feed(cfg(), client, ["ferris"], -3)
+    assert res[0]["ok"] is False
+    client.feed.assert_not_awaited()

@@ -124,6 +124,13 @@ class PetLibroSession:
                 async with websession.request(method, joined_url, **kwargs) as retry_resp:
                     retry_data = await retry_resp.json()
                     _LOGGER.debug(f"Retry response: {retry_data}")
+
+                    if retry_resp.status != 200:
+                        raise PetLibroAPIError(f"Request failed with status: {retry_resp.status}")
+
+                    if retry_data.get("code") != 0:
+                        raise PetLibroAPIError(f"Code: {retry_data.get('code')}, Message: {retry_data.get('msg')}")
+
                     return retry_data.get("data")
 
             if data.get("code") != 0:

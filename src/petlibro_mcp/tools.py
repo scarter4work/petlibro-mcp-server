@@ -12,6 +12,10 @@ async def feed(config: Config, client: PetLibroClient, pets, cups: float,
         return [{"pet": None, "cups": cups, "portions": None,
                  "ok": False, "error": str(e)}]
 
+    if cups <= 0:
+        return [{"pet": None, "cups": cups, "portions": None, "ok": False,
+                 "error": f"Refusing non-positive cups ({cups})."}]
+
     if not force and cups > config.max_cups_per_command:
         offenders = ", ".join(f.name for f in feeders)
         return [{"pet": None, "cups": cups, "portions": None, "ok": False,
@@ -51,7 +55,10 @@ async def open_lid(config: Config, client: PetLibroClient, pets) -> list[dict]:
 
 async def feeder_status(config: Config, client: PetLibroClient,
                         pet=None) -> list[dict]:
-    feeders = config.resolve_feeders("all" if pet is None else [pet])
+    try:
+        feeders = config.resolve_feeders("all" if pet is None else [pet])
+    except UnknownPetError as e:
+        return [{"pet": None, "ok": False, "error": str(e)}]
     results = []
     for f in feeders:
         try:
@@ -74,7 +81,10 @@ async def feeder_status(config: Config, client: PetLibroClient,
 
 async def fountain_status(config: Config, client: PetLibroClient,
                           name=None) -> list[dict]:
-    fountains = config.resolve_fountains(name)
+    try:
+        fountains = config.resolve_fountains(name)
+    except UnknownPetError as e:
+        return [{"fountain": None, "ok": False, "error": str(e)}]
     results = []
     for f in fountains:
         try:
