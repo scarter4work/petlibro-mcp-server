@@ -1,0 +1,52 @@
+[defaults]
+portions_per_cup = 12
+region = "US"
+max_cups_per_command = 4
+
+[[pet]]
+name = "zeus"
+serial = "EXAMPLE_FEEDER_SN_ZEUS"
+mac = "EXAMPLE_MAC_ZEUS"
+chip = "100001"
+
+[[pet]]
+name = "saffron"
+serial = "EXAMPLE_FEEDER_SN_SAFFRON"
+mac = "EXAMPLE_MAC_SAFFRON"
+chip = "100002"
+
+[[pet]]
+name = "ferris"
+serial = "EXAMPLE_FEEDER_SN_FERRIS"
+mac = "EXAMPLE_MAC_FERRIS"
+chip = "100003"
+
+[[pet]]
+name = "ricco"
+serial = "EXAMPLE_FEEDER_SN_RICCO"
+mac = "EXAMPLE_MAC_RICCO"
+chip = "100004"
+
+[[pet]]
+name = "bridget"
+serial = "EXAMPLE_FEEDER_SN_BRIDGET"
+mac = "EXAMPLE_MAC_BRIDGET"
+chip = "100005"
+
+[[pet]]
+name = "colby"
+serial = "EXAMPLE_FEEDER_SN_COLBY"
+mac = "EXAMPLE_MAC_COLBY"
+chip = "100006"
+
+[[fountain]]
+name = "dockstream1"
+serial = "EXAMPLE_FOUNTAIN_SN_1"
+mac = "EXAMPLE_MAC_FOUNTAIN_1"
+near = ["zeus", "colby", "bridget"]
+
+[[fountain]]
+name = "dockstream2"
+serial = "EXAMPLE_FOUNTAIN_SN_2"
+mac = "EXAMPLE_MAC_FOUNTAIN_2"
+near = ["saffron", "ricco", "ferris", "colby"]
