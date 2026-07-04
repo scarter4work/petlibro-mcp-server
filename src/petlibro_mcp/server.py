@@ -95,6 +95,26 @@ def build_server(config, client: PetLibroClient) -> Server:
     return server
 
 
+def _load_env_file() -> None:
+    """Load KEY=VALUE lines from a .env file into the environment if present.
+
+    Real environment variables win (``setdefault``), so an explicit env
+    override always beats the file. Path is ``PETLIBRO_ENV`` if set, else
+    ``.env`` beside pets.toml. This lets the MCP server read credentials from
+    the git-ignored .env instead of duplicating the password into a launcher
+    config.
+    """
+    env_path = Path(os.environ.get("PETLIBRO_ENV", Path(PETS_TOML).parent / ".env"))
+    if not env_path.is_file():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
 async def _run() -> None:
     config = load_config(PETS_TOML)
     client = PetLibroClient(config)
@@ -104,4 +124,5 @@ async def _run() -> None:
 
 
 def main() -> None:
+    _load_env_file()
     asyncio.run(_run())

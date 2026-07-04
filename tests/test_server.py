@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 from mcp import types
 
-from petlibro_mcp.server import build_server
+from petlibro_mcp.server import build_server, _load_env_file
 from petlibro_mcp.config import Config
 
 
@@ -31,3 +31,27 @@ async def test_lists_five_tools():
     names = {t.name for t in tools}
     assert names == {"feed", "open_lid", "feeder_status",
                       "fountain_status", "list_devices"}
+
+
+def test_load_env_file_populates_environment(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("PETLIBRO_TEST_KEY=from_file\n# a comment\n\n")
+    monkeypatch.setenv("PETLIBRO_ENV", str(env))
+    monkeypatch.delenv("PETLIBRO_TEST_KEY", raising=False)
+
+    _load_env_file()
+
+    import os
+    assert os.environ["PETLIBRO_TEST_KEY"] == "from_file"
+
+
+def test_load_env_file_does_not_override_real_env(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("PETLIBRO_TEST_KEY=from_file\n")
+    monkeypatch.setenv("PETLIBRO_ENV", str(env))
+    monkeypatch.setenv("PETLIBRO_TEST_KEY", "from_real_env")
+
+    _load_env_file()
+
+    import os
+    assert os.environ["PETLIBRO_TEST_KEY"] == "from_real_env"
