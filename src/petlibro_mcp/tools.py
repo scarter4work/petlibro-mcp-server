@@ -63,9 +63,11 @@ async def feeder_status(config: Config, client: PetLibroClient,
                 "battery": info.get("batteryState"),
                 "today_feeding_quantity": info.get("todayFeedingQuantity"),
                 "raw": info,
+                "ok": True,
             })
         except Exception as exc:
             results.append({"pet": f.name, "serial": f.serial,
+                            "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
     return results
 
@@ -78,9 +80,10 @@ async def fountain_status(config: Config, client: PetLibroClient,
         try:
             info = await client.real_info(f.serial)
             results.append({"fountain": f.name, "serial": f.serial,
-                            "near": f.near, "raw": info})
+                            "near": f.near, "raw": info, "ok": True})
         except Exception as exc:
             results.append({"fountain": f.name, "serial": f.serial,
+                            "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
     return results
 
@@ -90,7 +93,7 @@ async def list_devices(config: Config, client: PetLibroClient) -> dict:
     try:
         cloud = await client.list_devices()
     except Exception as exc:
-        cloud = [{"error": f"{type(exc).__name__}: {exc}"}]
+        cloud = [{"ok": False, "error": f"{type(exc).__name__}: {exc}"}]
     return {
         "feeders": [{"pet": f.name, "serial": f.serial} for f in config.feeders],
         "fountains": [{"name": f.name, "serial": f.serial} for f in config.fountains],

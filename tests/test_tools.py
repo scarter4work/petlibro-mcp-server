@@ -74,3 +74,19 @@ async def test_feeder_status_single(client):
     res = await tools.feeder_status(cfg(), client, "ferris")
     assert res[0]["pet"] == "ferris"
     assert res[0]["online"] is True
+
+
+async def test_feeder_status_reports_failure(client):
+    client.real_info = AsyncMock(side_effect=RuntimeError("offline"))
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert len(res) == 1
+    assert res[0]["ok"] is False
+    assert "offline" in res[0]["error"]
+
+
+async def test_fountain_status_reports_failure(client):
+    client.real_info = AsyncMock(side_effect=RuntimeError("offline"))
+    res = await tools.fountain_status(cfg(), client, "dockstream1")
+    assert len(res) == 1
+    assert res[0]["ok"] is False
+    assert "offline" in res[0]["error"]
