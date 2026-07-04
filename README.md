@@ -46,6 +46,13 @@ default).
 
 ### `pets.toml` — your devices
 
+Copy the bundled template and fill in your own devices (the real `pets.toml`
+is git-ignored so your serials/MACs/chip IDs stay private):
+
+```bash
+cp pets.example.toml pets.toml
+```
+
 `pets.toml` at the repo root maps your feeders and fountains to friendly
 names:
 
@@ -131,19 +138,18 @@ Example prompts once the server is registered with Claude:
 
 Add an entry to your MCP config (Claude Code's `.mcp.json`, or the Claude
 Desktop config). Credentials should come from `.env`, not be hardcoded in a
-config file that might get shared or committed. If your MCP host does not
-support loading a `.env` file directly, point `command` at a small wrapper
-that sources it before exec'ing the server, e.g.:
+config file that might get shared or committed.
+
+**The server loads `.env` for you.** On startup it reads a `.env` file next to
+`pets.toml` (or at `PETLIBRO_ENV`), so the simplest registration just points at
+the console script and sets the config path — no password in the MCP config at
+all:
 
 ```json
 {
   "mcpServers": {
     "petlibro": {
-      "command": "bash",
-      "args": [
-        "-c",
-        "set -a && source /home/scarter4work/projects/petlibro/.env && set +a && exec /home/scarter4work/projects/petlibro/.venv/bin/petlibro-mcp"
-      ],
+      "command": "/home/scarter4work/projects/petlibro/.venv/bin/petlibro-mcp",
       "env": {
         "PETLIBRO_PETS_TOML": "/home/scarter4work/projects/petlibro/pets.toml"
       }
@@ -151,6 +157,10 @@ that sources it before exec'ing the server, e.g.:
   }
 }
 ```
+
+`PETLIBRO_PETS_TOML` also tells the server where to find `.env` (same
+directory). Real environment variables always win over the `.env` file, so you
+can still override any value from the MCP `env` block.
 
 If you'd rather set credentials directly in the MCP config's `env` block
 instead of sourcing `.env`, never write the real password into a file that
@@ -193,3 +203,18 @@ config itself) out of git.
   seeing a real fountain payload to map the exact keys.
 - Schedule editing, fountain pump control, and RFID visit history
   (`recent_visits`) are not implemented.
+
+## License & attribution
+
+Licensed under **GPL-3.0-or-later** (see `LICENSE`).
+
+The code under `src/petlibro_mcp/vendored/` is derived from the community
+PETLIBRO Home Assistant integration
+([cd1zz/petlibro-homeassistant](https://github.com/cd1zz/petlibro-homeassistant),
+originally [jjjonesjr33/petlibro](https://github.com/jjjonesjr33/petlibro)),
+adapted to run standalone. That upstream is GPL-3.0, so this project is too.
+See `NOTICE` for details.
+
+PetLibro does not publish a public API; this project uses the same private
+cloud endpoints as the official app. Not affiliated with or endorsed by
+PetLibro.

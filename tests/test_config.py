@@ -4,7 +4,7 @@ from petlibro_mcp.config import (
     load_config, cups_to_portions, UnknownPetError, MissingCredentialsError,
 )
 
-TOML = str(Path(__file__).parent.parent / "pets.toml")
+TOML = str(Path(__file__).parent.parent / "pets.example.toml")
 ENV = {"PETLIBRO_EMAIL": "a@b.com", "PETLIBRO_PASSWORD": "pw"}
 
 

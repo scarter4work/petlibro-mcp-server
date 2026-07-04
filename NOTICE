@@ -1,0 +1,17 @@
+petlibro-mcp-server
+===================
+
+This project is licensed under the GNU General Public License v3.0 (see LICENSE).
+
+The code under `src/petlibro_mcp/vendored/` is derived from the PETLIBRO Home
+Assistant integration and is used under the terms of the GPL-3.0:
+
+  - cd1zz/petlibro-homeassistant  (https://github.com/cd1zz/petlibro-homeassistant)
+  - originally jjjonesjr33/petlibro (https://github.com/jjjonesjr33/petlibro)
+
+The vendored PetLibro cloud API client was adapted to run standalone (Home
+Assistant coupling removed). All other code in this repository is original work
+by scarter4work, distributed under the same GPL-3.0 license.
+
+PetLibro does not publish a public API; this project talks to the same private
+cloud endpoints the official app uses. Not affiliated with or endorsed by PetLibro.
