@@ -208,21 +208,26 @@ async def test_compute_rhythm_returns_enabled_and_target():
 
 class _FakePlanClient:
     """Stateful fake: holds a plan list, mutates it via the write methods."""
-    def __init__(self, plans, work, drop_writes=False):
+    def __init__(self, plans, work, drop_writes=False, corrupt=False, raise_on_update=False):
         self._plans = [dict(p) for p in plans]
         self._work = work
         self._next_id = max([p["id"] for p in self._plans], default=0) + 1
         self.drop_writes = drop_writes  # simulate a cloud that silently ignores writes
+        self.corrupt = corrupt
+        self.raise_on_update = raise_on_update
     async def work_record(self, serial, days=60):
         return self._work
     async def feeding_plans(self, serial):
         return [dict(p) for p in self._plans]
     async def update_plan(self, serial, plan):
+        if self.raise_on_update:
+            raise RuntimeError("update failed")
         if self.drop_writes:
             return
+        grain = plan["grainNum"] + 100 if self.corrupt else plan["grainNum"]
         for p in self._plans:
             if p["id"] == plan["id"]:
-                p.update({"executionTime": plan["executionTime"], "grainNum": plan["grainNum"]})
+                p.update({"executionTime": plan["executionTime"], "grainNum": grain})
     async def add_plan(self, serial, plan):
         if self.drop_writes:
             return
@@ -282,3 +287,25 @@ async def test_apply_unknown_pet_errors():
     client = _FakePlanClient([], _work_record_days())
     res = await tools.apply_schedule(cfg(), client, "mittens", apply=True)
     assert res[0]["ok"] is False and "mittens" in res[0]["error"]
+
+
+async def test_apply_rollback_restores_genuinely_mutated_state():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), corrupt=True)
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is False and "erify" in r["error"] and "rolled back" in r["error"]
+    restored = sorted((p["executionTime"], p["grainNum"])
+                      for p in await client.feeding_plans("x") if p.get("enable", True))
+    assert restored == [("08:00", 3), ("20:00", 2)]
+
+
+async def test_apply_rolls_back_when_write_raises():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), raise_on_update=True)
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is False and "mid-apply" in r["error"]
+    restored = sorted((p["executionTime"], p["grainNum"])
+                      for p in await client.feeding_plans("x") if p.get("enable", True))
+    assert restored == [("08:00", 3), ("20:00", 2)]

@@ -185,8 +185,9 @@ def _enabled_pairs(plans) -> list[tuple[str, int]]:
 
 
 async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
-    """Restore `snapshot` by removing current enabled rows and re-adding the snapshot.
-    Returns True if the readback matches the snapshot."""
+    """Restore `snapshot` by wiping current enabled rows and re-adding the snapshot.
+    Returns True iff the readback matches the snapshot. May raise if a call fails —
+    the caller treats a raised exception as a failed rollback."""
     current = [p for p in await client.feeding_plans(serial) if p.get("enable", True)]
     for p in current:
         await client.remove_plan(serial, p["id"])
@@ -197,13 +198,46 @@ async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
     return got == want
 
 
+async def _apply_with_rollback(client, serial: str, actions: dict,
+                               snapshot: list[dict], target_rows) -> dict:
+    """Apply the diff and verify; on ANY failure — a write exception OR a verify
+    mismatch — attempt rollback to `snapshot`. Always surface the snapshot for
+    manual restore if rollback cannot be confirmed."""
+    want = sorted((t, g) for t, g in target_rows)
+    apply_error = None
+    got = None
+    try:
+        await _apply_actions(client, serial, actions)
+        got = _enabled_pairs(await client.feeding_plans(serial))
+    except Exception as exc:
+        apply_error = f"{type(exc).__name__}: {exc}"
+    else:
+        if got == want:
+            return {"ok": True, "applied": True,
+                    "schedule": [{"time": t, "portions": g} for t, g in want]}
+    try:
+        rolled = await _rollback(client, serial, snapshot)
+        rollback_error = None
+    except Exception as exc:
+        rolled = False
+        rollback_error = f"{type(exc).__name__}: {exc}"
+    base = (f"Write failed mid-apply ({apply_error})" if apply_error
+            else f"Verify failed after apply (expected {want}, got {got})")
+    if rolled:
+        return {"ok": False, "error": f"{base}; rolled back to snapshot.",
+                "expected": want, "got": got}
+    tail = (f" rollback also raised ({rollback_error})" if rollback_error
+            else " rollback did not restore snapshot")
+    return {"ok": False, "error": f"{base};{tail} — restore manually from snapshot.",
+            "expected": want, "got": got, "snapshot": snapshot}
+
+
 async def apply_schedule(config: Config, client: PetLibroClient,
                          pet, days: int = 60, apply: bool = False) -> list[dict]:
     try:
-        feeders = config.resolve_feeders([pet] if isinstance(pet, str) else pet)
+        feeders = config.resolve_feeders(pet)
     except UnknownPetError as e:
         return [{"pet": None, "serial": None, "ok": False, "error": str(e)}]
-
     results = []
     for f in feeders:
         try:
@@ -215,7 +249,6 @@ async def apply_schedule(config: Config, client: PetLibroClient,
                     "error": (f"Refusing: target total {target_total} exceeds "
                               f"current {total} portions.")})
                 continue
-
             actions = diff_schedule(enabled, target_rows)
             if not apply:
                 results.append({
@@ -224,24 +257,10 @@ async def apply_schedule(config: Config, client: PetLibroClient,
                     "would_remove": actions["removes"],
                     "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]})
                 continue
-
             snapshot = [dict(p) for p in enabled]
-            await _apply_actions(client, f.serial, actions)
-            got = _enabled_pairs(await client.feeding_plans(f.serial))
-            want = sorted((t, g) for t, g in target_rows)
-            if got == want:
-                results.append({"pet": f.name, "serial": f.serial, "ok": True,
-                    "applied": True,
-                    "schedule": [{"time": t, "portions": g} for t, g in want]})
-            else:
-                rolled = await _rollback(client, f.serial, snapshot)
-                results.append({"pet": f.name, "serial": f.serial, "ok": False,
-                    "error": ("Verify failed after apply; rolled back to snapshot."
-                              if rolled else
-                              "Verify failed AND rollback failed — restore manually from snapshot."),
-                    "expected": want, "got": got,
-                    "snapshot": None if rolled else snapshot})
-        except Exception as exc:  # surface, never swallow
+            res = await _apply_with_rollback(client, f.serial, actions, snapshot, target_rows)
+            results.append({"pet": f.name, "serial": f.serial, **res})
+        except Exception as exc:  # pre-write failures (compute/diff) — device untouched
             results.append({"pet": f.name, "serial": f.serial, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
     return results
