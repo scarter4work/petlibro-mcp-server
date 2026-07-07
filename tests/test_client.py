@@ -75,3 +75,44 @@ async def test_feeding_plans_delegates_to_api():
     assert out == [{"executionTime": "08:00", "grainNum": 3}]
     api.login.assert_awaited()
     api.get_feeding_plans.assert_awaited_once_with("SN-1")
+
+
+async def test_update_plan_posts_community_payload():
+    api = AsyncMock()
+    api.session.post = AsyncMock(return_value=None)
+    client = PetLibroClient(_cfg(), api=api)
+    plan = {"id": 42, "executionTime": "08:00", "grainNum": 3,
+            "repeatDay": "[1,2,3,4,5,6,7]", "label": "Zeus",
+            "enableAudio": True, "audioTimes": 2, "enable": True}
+    await client.update_plan("SN-1", plan)
+    api.login.assert_awaited()  # ensure_login gate
+    api.session.post.assert_awaited_once_with("/device/feedingPlan/update", json={
+        "id": 42, "deviceSn": "SN-1", "executionTime": "08:00",
+        "repeatDay": "[1,2,3,4,5,6,7]", "label": "Zeus", "enable": True,
+        "enableAudio": True, "audioTimes": 2, "grainNum": 3, "petIds": [],
+    })
+
+
+async def test_add_plan_posts_with_id_zero():
+    api = AsyncMock()
+    api.session.post = AsyncMock(return_value=None)
+    client = PetLibroClient(_cfg(), api=api)
+    plan = {"executionTime": "20:00", "grainNum": 2,
+            "repeatDay": "[1,2,3,4,5,6,7]", "label": "", "enableAudio": False,
+            "audioTimes": 2}
+    await client.add_plan("SN-1", plan)
+    _, kwargs = api.session.post.call_args
+    body = kwargs["json"]
+    assert body["id"] == 0 and body["deviceSn"] == "SN-1"
+    assert body["executionTime"] == "20:00" and body["grainNum"] == 2
+    assert body["enable"] is True and body["petIds"] == []
+
+
+async def test_remove_plan_posts_plan_id():
+    api = AsyncMock()
+    api.session.post = AsyncMock(return_value=None)
+    client = PetLibroClient(_cfg(), api=api)
+    await client.remove_plan("SN-1", 42)
+    api.session.post.assert_awaited_once_with("/device/feedingPlan/remove", json={
+        "deviceSn": "SN-1", "planId": 42,
+    })

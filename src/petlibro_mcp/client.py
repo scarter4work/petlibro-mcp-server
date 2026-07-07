@@ -44,3 +44,43 @@ class PetLibroClient:
     async def feeding_plans(self, serial: str) -> list:
         await self.ensure_login()
         return await self._api.get_feeding_plans(serial)
+
+    async def update_plan(self, serial: str, plan: dict) -> None:
+        """Edit an existing feeding-plan row (by id). Community-verified payload."""
+        await self.ensure_login()
+        await self._api.session.post("/device/feedingPlan/update", json={
+            "id": plan["id"],
+            "deviceSn": serial,
+            "executionTime": plan.get("executionTime"),
+            "repeatDay": plan.get("repeatDay", "[]"),
+            "label": plan.get("label", ""),
+            "enable": plan.get("enable", True),
+            "enableAudio": plan.get("enableAudio", False),
+            "audioTimes": plan.get("audioTimes", 2),
+            "grainNum": plan.get("grainNum"),
+            "petIds": [],
+        })
+
+    async def add_plan(self, serial: str, plan: dict) -> None:
+        """Create a new feeding-plan row (id=0). Community-verified payload."""
+        await self.ensure_login()
+        await self._api.session.post("/device/feedingPlan/add", json={
+            "id": 0,
+            "deviceSn": serial,
+            "executionTime": plan.get("executionTime"),
+            "repeatDay": plan.get("repeatDay", "[]"),
+            "label": plan.get("label", ""),
+            "enable": True,
+            "enableAudio": plan.get("enableAudio", False),
+            "audioTimes": plan.get("audioTimes", 2),
+            "grainNum": plan.get("grainNum"),
+            "petIds": [],
+        })
+
+    async def remove_plan(self, serial: str, plan_id: int) -> None:
+        """Delete a feeding-plan row by id."""
+        await self.ensure_login()
+        await self._api.session.post("/device/feedingPlan/remove", json={
+            "deviceSn": serial,
+            "planId": plan_id,
+        })
