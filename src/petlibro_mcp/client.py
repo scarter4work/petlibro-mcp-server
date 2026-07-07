@@ -1,5 +1,6 @@
 """Clean async facade over the vendored PetLibro cloud client."""
 from __future__ import annotations
+from datetime import datetime, timedelta
 from .config import Config
 from .vendored.api import PetLibroAPI
 
@@ -30,3 +31,16 @@ class PetLibroClient:
     async def real_info(self, serial: str) -> dict:
         await self.ensure_login()
         return await self._api.get_device_real_info(serial)
+
+    async def work_record(self, serial: str, days: int = 60, size: int = 1000) -> list:
+        await self.ensure_login()
+        now = datetime.utcnow()
+        start = int((now - timedelta(days=days)).timestamp() * 1000)
+        end = int(now.timestamp() * 1000)
+        return await self._api.session.request("POST", "/device/workRecord/list", json={
+            "deviceSn": serial, "startTime": start, "endTime": end, "size": size,
+        })
+
+    async def feeding_plans(self, serial: str) -> list:
+        await self.ensure_login()
+        return await self._api.get_feeding_plans(serial)

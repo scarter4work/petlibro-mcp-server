@@ -46,3 +46,30 @@ async def test_open_lid_calls_api(api):
 async def test_real_info_passthrough(api):
     c = PetLibroClient(make_config(), api=api)
     assert await c.real_info("SN-FERRIS") == {"surplusGrain": True}
+
+
+def _cfg():
+    return Config(feeders=[], fountains=[], region="US",
+                  max_cups_per_command=4, email="a@b.com", password="pw")
+
+
+async def test_work_record_posts_expected_payload():
+    api = AsyncMock()
+    api.session.request = AsyncMock(return_value=[{"workRecords": []}])
+    client = PetLibroClient(_cfg(), api=api)
+    out = await client.work_record("SN-1", days=30, size=500)
+    assert out == [{"workRecords": []}]
+    args, kwargs = api.session.request.call_args
+    assert args[0] == "POST" and args[1] == "/device/workRecord/list"
+    body = kwargs["json"]
+    assert body["deviceSn"] == "SN-1" and body["size"] == 500
+    assert body["startTime"] < body["endTime"]
+
+
+async def test_feeding_plans_delegates_to_api():
+    api = AsyncMock()
+    api.get_feeding_plans = AsyncMock(return_value=[{"executionTime": "08:00", "grainNum": 3}])
+    client = PetLibroClient(_cfg(), api=api)
+    out = await client.feeding_plans("SN-1")
+    assert out == [{"executionTime": "08:00", "grainNum": 3}]
+    api.get_feeding_plans.assert_awaited_once_with("SN-1")
