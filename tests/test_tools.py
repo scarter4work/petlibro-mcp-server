@@ -194,3 +194,13 @@ async def test_analyze_rhythm_treats_missing_enable_as_enabled():
     res = await tools.analyze_rhythm(cfg(), client, "ferris")
     assert res[0]["ok"] is True
     assert res[0]["daily_total_portions"] == 4
+
+
+async def test_compute_rhythm_returns_enabled_and_target():
+    client = _client_for_analyze()  # existing helper: 10 visits @ 08:00, plans 3+2 enabled, 1 disabled
+    feeder = cfg().resolve_feeders(["ferris"])[0]
+    rc = await tools._compute_rhythm(client, feeder, 60)
+    assert rc["total"] == 5                 # enabled 3+2, disabled row excluded
+    assert rc["eating_visits"] == 10
+    assert len(rc["enabled"]) == 2          # disabled row excluded
+    assert sum(g for _, g in rc["target_rows"]) == 5

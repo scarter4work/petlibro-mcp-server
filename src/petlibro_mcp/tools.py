@@ -126,6 +126,25 @@ async def fountain_status(config: Config, client: PetLibroClient,
     return results
 
 
+async def _compute_rhythm(client, feeder, days: int) -> dict:
+    """Compute rhythm analysis for a feeder: enabled plans, current schedule, target rows.
+
+    Returns dict with keys: enabled, current, total, eating_visits, target_rows.
+    """
+    raw = await client.work_record(feeder.serial, days=days)
+    eats, _dispenses = parse_work_record(raw)
+    plans = await client.feeding_plans(feeder.serial)
+    enabled = [p for p in plans if p.get("enable", True)]
+    current = [(p.get("executionTime"), int(p.get("grainNum") or 0)) for p in enabled]
+    total = sum(g for _, g in current)
+    tod = [(minute, max(dur, 1)) for minute, dur in eats]
+    curve = circadian_curve(tod)
+    split = split_at_peaks(curve, find_peaks(curve))
+    target_rows = plan_rows(split, total)
+    return {"enabled": enabled, "current": current, "total": total,
+            "eating_visits": len(eats), "target_rows": target_rows}
+
+
 async def analyze_rhythm(config: Config, client: PetLibroClient,
                          pet=None, days: int = 60) -> list[dict]:
     try:
@@ -136,25 +155,13 @@ async def analyze_rhythm(config: Config, client: PetLibroClient,
     results = []
     for f in feeders:
         try:
-            raw = await client.work_record(f.serial, days=days)
-            eats, _dispenses = parse_work_record(raw)
-
-            plans = await client.feeding_plans(f.serial)
-            current = [(p.get("executionTime"), int(p.get("grainNum") or 0))
-                       for p in plans if p.get("enable", True)]
-            total = sum(g for _, g in current)
-
-            tod = [(minute, max(dur, 1)) for minute, dur in eats]
-            curve = circadian_curve(tod)
-            split = split_at_peaks(curve, find_peaks(curve))
-            recommended = plan_rows(split, total)
-
+            rc = await _compute_rhythm(client, f, days)
             results.append({
                 "pet": f.name, "serial": f.serial, "ok": True,
-                "days": days, "eating_visits": len(eats),
-                "daily_total_portions": total,
-                "current_schedule": [{"time": t, "portions": g} for t, g in current],
-                "recommended_schedule": [{"time": t, "portions": g} for t, g in recommended],
+                "days": days, "eating_visits": rc["eating_visits"],
+                "daily_total_portions": rc["total"],
+                "current_schedule": [{"time": t, "portions": g} for t, g in rc["current"]],
+                "recommended_schedule": [{"time": t, "portions": g} for t, g in rc["target_rows"]],
             })
         except Exception as exc:  # surface, never swallow
             results.append({"pet": f.name, "serial": f.serial, "ok": False,
