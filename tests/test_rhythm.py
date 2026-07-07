@@ -1,4 +1,4 @@
-from petlibro_mcp.rhythm import BINS, circadian_curve
+from petlibro_mcp.rhythm import BINS, circadian_curve, find_peaks
 
 
 def test_curve_length_and_bucketing():
@@ -20,3 +20,33 @@ def test_smoothing_spreads_mass_circularly():
     assert curve[0] == 3.0
     assert curve[1] == 3.0
     assert curve[47] == 3.0
+
+
+def test_find_peaks_picks_separated_maxima():
+    curve = [0.0] * 48
+    curve[8] = 10.0    # 04:00
+    curve[20] = 8.0    # 10:00
+    curve[40] = 6.0    # 20:00
+    peaks = find_peaks(curve, max_meals=6, min_separation_bins=3)
+    assert peaks == [8, 20, 40]
+
+
+def test_find_peaks_respects_max_meals():
+    curve = [0.0] * 48
+    for i, v in [(4, 10), (12, 9), (20, 8), (28, 7), (36, 6), (44, 5)]:
+        curve[i] = float(v)
+    peaks = find_peaks(curve, max_meals=3, min_separation_bins=3)
+    assert peaks == [4, 12, 20]  # three tallest, still sorted by time
+
+
+def test_find_peaks_enforces_separation():
+    curve = [0.0] * 48
+    curve[10] = 10.0
+    curve[11] = 9.0   # adjacent -> excluded by separation
+    curve[30] = 8.0
+    peaks = find_peaks(curve, max_meals=6, min_separation_bins=3)
+    assert peaks == [10, 30]
+
+
+def test_find_peaks_empty_curve():
+    assert find_peaks([0.0] * 48) == []

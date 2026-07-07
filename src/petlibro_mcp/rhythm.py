@@ -24,3 +24,32 @@ def circadian_curve(tod_weights, bins: int = 48, smooth: int = 2) -> list[float]
             acc += hist[(i + d) % bins]
         out[i] = acc / window
     return out
+
+
+def _circ_dist(a: int, b: int, bins: int) -> int:
+    """Minimum circular distance between indices a and b in a cycle of bins."""
+    d = abs(a - b) % bins
+    return min(d, bins - d)
+
+
+def find_peaks(curve, max_meals: int = 6, min_separation_bins: int = 3) -> list[int]:
+    """Bin indices of meal peaks: circular local maxima, tallest first, spaced.
+
+    Returns sorted bin indices of the chosen meal peaks, enforcing minimum
+    separation in circular distance and limiting to max_meals peaks.
+    """
+    bins = len(curve)
+    cands = [
+        i for i in range(bins)
+        if curve[i] > 0
+        and curve[i] >= curve[(i - 1) % bins]
+        and curve[i] > curve[(i + 1) % bins]
+    ]
+    cands.sort(key=lambda i: curve[i], reverse=True)
+    chosen: list[int] = []
+    for i in cands:
+        if all(_circ_dist(i, j, bins) >= min_separation_bins for j in chosen):
+            chosen.append(i)
+        if len(chosen) >= max_meals:
+            break
+    return sorted(chosen)
