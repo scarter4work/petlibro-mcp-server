@@ -5,3 +5,5 @@ __pycache__/
 scripts/smoke.py
 .env
 pets.toml
+.playwright-mcp/
+webui-*.png
