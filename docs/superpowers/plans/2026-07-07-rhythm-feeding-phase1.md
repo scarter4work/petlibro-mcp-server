@@ -30,8 +30,10 @@
 - Consumes: nothing (pure).
 - Produces:
   - `parse_duration(text: str) -> int` — `"01m37s"` → `97`, `"24s"` → `24`, `"1h02m03s"` → `3723`, unparseable → `0`.
-  - `parse_work_record(days: list[dict]) -> tuple[list[tuple[float, int]], list[tuple[float, int]]]` — returns `(eats, dispenses)`; `eats` are `(ts_epoch_s, duration_s)`, `dispenses` are `(ts_epoch_s, grain)`.
-  - `time_of_day_minutes(ts_epoch_s: float, tz_name: str) -> int` — minutes since local midnight (0–1439).
+  - `parse_work_record(days: list[dict]) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]` — returns `(eats, dispenses)`; `eats` are `(minute_of_day, duration_s)`, `dispenses` are `(minute_of_day, grain)`. Each event is placed on the clock by its own `formatRecordTime`; events without a parseable one are skipped.
+  - `time_of_day_minutes(format_record_time: str) -> int | None` — minutes since midnight (0–1439) parsed from the device's own `formatRecordTime` string (e.g. `"2026-07-07 07:27"`); `None` if unparseable.
+
+**Why `formatRecordTime`, not epoch+timezone:** PetLibro's cloud reports each event's local wall-clock in `formatRecordTime`, using a fixed device offset (verified: it labels an event `07:27` where DST-aware `America/Indiana/Indianapolis` would say `08:27`). That wall-clock is the *same clock* the feeding-plan `executionTime` values use, so deriving meal times from it keeps recommendations and the schedule in one clock. Converting the epoch through a DST-aware `ZoneInfo` would shift every meal time an hour. No `Config.timezone` is needed.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -54,26 +56,35 @@ def test_parse_work_record_splits_eats_and_dispenses():
         "workRecords": [
             {"type": "DETECTION_EVENT",
              "eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
-             "recordTime": 1783427269000,
+             "formatRecordTime": "2026-07-07 07:27",
              "params": '{"petName":"Saffron","seconds":"01m37s"}',
              "content": "Saffron came to eat and ate for 01m37s."},
             {"type": "GRAIN_OUTPUT_SUCCESS", "eventType": "FEEDING_PLAN_SUCCESS",
-             "recordTime": 1783422014000, "actualGrainNum": 3, "expectGrainNum": 3},
+             "formatRecordTime": "2026-07-07 05:40",
+             "actualGrainNum": 3, "expectGrainNum": 3},
         ],
     }]
     eats, dispenses = parse_work_record(days)
-    assert eats == [(1783427269.0, 97)]
-    assert dispenses == [(1783422014.0, 3)]
+    assert eats == [(7 * 60 + 27, 97)]        # 447 minutes
+    assert dispenses == [(5 * 60 + 40, 3)]    # 340 minutes
 
 
 def test_parse_work_record_falls_back_to_content_for_duration():
     days = [{"workRecords": [
         {"eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
-         "recordTime": 1000000, "params": "",
+         "formatRecordTime": "2026-07-07 00:16", "params": "",
          "content": "Rico came to eat and ate for 24s."},
     ]}]
     eats, _ = parse_work_record(days)
-    assert eats == [(1000.0, 24)]
+    assert eats == [(16, 24)]
+
+
+def test_parse_work_record_skips_events_without_formatted_time():
+    days = [{"workRecords": [
+        {"eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
+         "params": '{"seconds":"10s"}'},   # no formatRecordTime -> unplaceable
+    ]}]
+    assert parse_work_record(days) == ([], [])
 
 
 def test_parse_work_record_handles_empty():
@@ -81,9 +92,12 @@ def test_parse_work_record_handles_empty():
     assert parse_work_record(None) == ([], [])
 
 
-def test_time_of_day_minutes_uses_local_tz():
-    # 1783427269 -> 2026-07-07 07:27 America/Indiana/Indianapolis
-    assert time_of_day_minutes(1783427269, "America/Indiana/Indianapolis") == 7 * 60 + 27
+def test_time_of_day_minutes_parses_device_wall_clock():
+    # PetLibro's own formatRecordTime string is authoritative (fixed offset).
+    assert time_of_day_minutes("2026-07-07 07:27") == 7 * 60 + 27
+    assert time_of_day_minutes("2026-07-07 07:27:49") == 7 * 60 + 27
+    assert time_of_day_minutes("garbage") is None
+    assert time_of_day_minutes("") is None
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -99,11 +113,10 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'petlibro_mcp.history'
 from __future__ import annotations
 import json
 import re
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 _DUR = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 _ATE_FOR = re.compile(r"ate for ([0-9hms]+)")
+_HHMM = re.compile(r"\b(\d{1,2}):(\d{2})")
 
 _EAT_EVENT = "PET_IDENTIFY_LEAVE_EVENT_BIND_PET"
 _DISPENSE_TYPE = "GRAIN_OUTPUT_SUCCESS"
@@ -118,16 +131,36 @@ def parse_duration(text: str) -> int:
     return h * 3600 + mnt * 60 + s
 
 
-def parse_work_record(days) -> tuple[list[tuple[float, int]], list[tuple[float, int]]]:
+def time_of_day_minutes(format_record_time: str) -> int | None:
+    """Minutes since midnight (0-1439) from a 'YYYY-MM-DD HH:MM[:SS]' string.
+
+    Uses PetLibro's own device wall-clock (fixed offset), which is the same
+    clock the feeding-plan executionTime values use. Returns None if the
+    string has no parseable HH:MM.
+    """
+    m = _HHMM.search(format_record_time or "")
+    if not m:
+        return None
+    h, mn = int(m.group(1)), int(m.group(2))
+    if not (0 <= h < 24 and 0 <= mn < 60):
+        return None
+    return h * 60 + mn
+
+
+def parse_work_record(days) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Split day-grouped workRecords into (eats, dispenses) event series.
 
-    eats: (ts_epoch_s, eating_duration_s); dispenses: (ts_epoch_s, grain).
+    eats: (minute_of_day, eating_duration_s); dispenses: (minute_of_day, grain).
+    Each event is placed by its formatRecordTime; events lacking a parseable
+    one are skipped (they cannot be placed on the daily clock).
     """
-    eats: list[tuple[float, int]] = []
-    dispenses: list[tuple[float, int]] = []
+    eats: list[tuple[int, int]] = []
+    dispenses: list[tuple[int, int]] = []
     for day in days or []:
         for w in day.get("workRecords", []):
-            ts = (w.get("recordTime") or 0) / 1000
+            minute = time_of_day_minutes(w.get("formatRecordTime") or "")
+            if minute is None:
+                continue
             if w.get("eventType") == _EAT_EVENT:
                 secs = 0
                 try:
@@ -137,22 +170,16 @@ def parse_work_record(days) -> tuple[list[tuple[float, int]], list[tuple[float, 
                 if not secs:
                     mt = _ATE_FOR.search(w.get("content") or "")
                     secs = parse_duration(mt.group(1)) if mt else 0
-                eats.append((ts, secs))
+                eats.append((minute, secs))
             elif w.get("type") == _DISPENSE_TYPE:
-                dispenses.append((ts, int(w.get("actualGrainNum") or 0)))
+                dispenses.append((minute, int(w.get("actualGrainNum") or 0)))
     return eats, dispenses
-
-
-def time_of_day_minutes(ts_epoch_s: float, tz_name: str) -> int:
-    """Minutes since local midnight (0-1439) for an epoch-second timestamp."""
-    dt = datetime.fromtimestamp(ts_epoch_s, ZoneInfo(tz_name))
-    return dt.hour * 60 + dt.minute
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_history.py -v`
-Expected: PASS (5 passed)
+Expected: PASS (6 passed)
 
 - [ ] **Step 5: Commit**
 
@@ -163,34 +190,21 @@ git commit -m "feat: parse PetLibro workRecord history into event series"
 
 ---
 
-### Task 2: Config `timezone` + client facade read methods
+### Task 2: Client facade read methods
 
 **Files:**
-- Modify: `src/petlibro_mcp/config.py` (add `timezone` field + load it)
 - Modify: `src/petlibro_mcp/client.py` (add `work_record`, `feeding_plans`)
-- Test: `tests/test_client.py` (append), `tests/test_config.py` (append)
+- Test: `tests/test_client.py` (append)
 
 **Interfaces:**
 - Consumes: `PetLibroAPI.get_feeding_plans` (exists), `PetLibroAPI.session.request` (exists).
 - Produces:
-  - `Config.timezone: str` — IANA tz, default `"America/Chicago"`, loaded from `[defaults].timezone`.
   - `PetLibroClient.work_record(serial: str, days: int = 60, size: int = 1000) -> list` — raw day-grouped workRecords.
   - `PetLibroClient.feeding_plans(serial: str) -> list` — current plan rows (each has `executionTime`, `grainNum`, `enable`).
 
-- [ ] **Step 1: Write the failing tests**
+Note: no `Config.timezone` — time-of-day comes from each event's `formatRecordTime` (see Task 1), so no timezone config is needed.
 
-```python
-# tests/test_config.py  (append)
-def test_timezone_defaults_and_loads(tmp_path, monkeypatch):
-    from petlibro_mcp.config import load_config
-    monkeypatch.setenv("PETLIBRO_EMAIL", "a@b.com")
-    monkeypatch.setenv("PETLIBRO_PASSWORD", "pw")
-    p = tmp_path / "pets.toml"
-    p.write_text('[defaults]\nportions_per_cup = 1\n')
-    assert load_config(str(p)).timezone == "America/Chicago"
-    p.write_text('[defaults]\ntimezone = "America/Indiana/Indianapolis"\n')
-    assert load_config(str(p)).timezone == "America/Indiana/Indianapolis"
-```
+- [ ] **Step 1: Write the failing tests**
 
 ```python
 # tests/test_client.py  (append)
@@ -228,34 +242,10 @@ async def test_feeding_plans_delegates_to_api():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `.venv/bin/pytest tests/test_client.py -k "work_record or feeding_plans" tests/test_config.py -k timezone -v`
-Expected: FAIL — `AttributeError: 'PetLibroClient' object has no attribute 'work_record'` and `Config` has no `timezone`.
+Run: `.venv/bin/pytest tests/test_client.py -k "work_record or feeding_plans" -v`
+Expected: FAIL — `AttributeError: 'PetLibroClient' object has no attribute 'work_record'`.
 
-- [ ] **Step 3: Add the `timezone` field to Config**
-
-In `src/petlibro_mcp/config.py`, add a trailing field to the `Config` dataclass (after `password`, so keyword construction elsewhere is unaffected):
-
-```python
-@dataclass
-class Config:
-    feeders: list[Feeder]
-    fountains: list[Fountain]
-    region: str
-    max_cups_per_command: int
-    email: str
-    password: str
-    timezone: str = "America/Chicago"
-```
-
-In `load_config`, read it from defaults and pass it to the constructor:
-
-```python
-    tz = defaults.get("timezone", "America/Chicago")
-    # ...
-    return Config(feeders, fountains, region, max_cups, email, password, tz)
-```
-
-- [ ] **Step 4: Add the facade methods to the client**
+- [ ] **Step 3: Add the facade methods to the client**
 
 In `src/petlibro_mcp/client.py`, add the import and two methods:
 
@@ -278,16 +268,16 @@ from datetime import datetime, timedelta
         return await self._api.get_feeding_plans(serial)
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
-Run: `.venv/bin/pytest tests/test_client.py tests/test_config.py -v`
+Run: `.venv/bin/pytest tests/test_client.py -v`
 Expected: PASS (existing tests still pass; new ones green)
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/petlibro_mcp/config.py src/petlibro_mcp/client.py tests/test_client.py tests/test_config.py
-git commit -m "feat: config timezone + read-only work_record/feeding_plans facade"
+git add src/petlibro_mcp/client.py tests/test_client.py
+git commit -m "feat: read-only work_record/feeding_plans facade methods"
 ```
 
 ---
@@ -652,7 +642,7 @@ git commit -m "feat: allocate daily total into rhythm-timed plan rows"
 - Test: `tests/test_tools.py` (append)
 
 **Interfaces:**
-- Consumes: `history.parse_work_record`, `history.time_of_day_minutes`, `rhythm.circadian_curve`, `rhythm.find_peaks`, `rhythm.split_at_peaks`, `planner.plan_rows`; `client.work_record`, `client.feeding_plans`; `config.timezone`.
+- Consumes: `history.parse_work_record`, `rhythm.circadian_curve`, `rhythm.find_peaks`, `rhythm.split_at_peaks`, `planner.plan_rows`; `client.work_record`, `client.feeding_plans`. (`parse_work_record` already yields minute-of-day, so no timezone handling here.)
 - Produces:
   - `async def analyze_rhythm(config, client, pet=None, days: int = 60) -> list[dict]` — one dict per feeder: `{"pet", "serial", "ok", "days", "eating_visits", "daily_total_portions", "current_schedule": [{"time","portions"}], "recommended_schedule": [{"time","portions"}]}` or `{"pet","serial","ok": False,"error"}`.
 
@@ -664,13 +654,12 @@ The recommended schedule redistributes the **current** daily total (sum of enabl
 # tests/test_tools.py  (append)
 
 def _work_record_days():
-    # cluster of eating visits around 08:00, plus a couple around 20:00
+    # 10 eating visits all clustered at 08:00 (device wall-clock)
     recs = {"workRecords": []}
-    base = 1783420800  # 2026-07-07 08:00 UTC-ish; tz applied in tool
-    for k in range(10):
+    for _ in range(10):
         recs["workRecords"].append({
             "eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
-            "recordTime": (base + k) * 1000,
+            "formatRecordTime": "2026-07-07 08:00",
             "params": '{"seconds":"02m00s"}',
         })
     return [recs]
@@ -722,7 +711,7 @@ Expected: FAIL with `AttributeError: module 'petlibro_mcp.tools' has no attribut
 Add imports at the top of `src/petlibro_mcp/tools.py`:
 
 ```python
-from .history import parse_work_record, time_of_day_minutes
+from .history import parse_work_record
 from .rhythm import circadian_curve, find_peaks, split_at_peaks
 from .planner import plan_rows
 ```
@@ -748,8 +737,7 @@ async def analyze_rhythm(config: Config, client: PetLibroClient,
                        for p in plans if p.get("enable", True)]
             total = sum(g for _, g in current)
 
-            tod = [(time_of_day_minutes(ts, config.timezone), max(dur, 1))
-                   for ts, dur in eats]
+            tod = [(minute, max(dur, 1)) for minute, dur in eats]
             curve = circadian_curve(tod)
             split = split_at_peaks(curve, find_peaks(curve))
             recommended = plan_rows(split, total)
