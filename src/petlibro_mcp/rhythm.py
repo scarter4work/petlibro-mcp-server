@@ -4,7 +4,7 @@ from __future__ import annotations
 BINS = 48  # 30-minute bins across 24h
 
 
-def circadian_curve(tod_weights, bins: int = 48, smooth: int = 2) -> list[float]:
+def circadian_curve(tod_weights: list[tuple[int, int]], bins: int = BINS, smooth: int = 2) -> list[float]:
     """Duration-weighted intensity curve over the 24h clock.
 
     tod_weights: (minute_of_day, weight). Returns a length-`bins` list; when
@@ -32,7 +32,7 @@ def _circ_dist(a: int, b: int, bins: int) -> int:
     return min(d, bins - d)
 
 
-def find_peaks(curve, max_meals: int = 6, min_separation_bins: int = 3) -> list[int]:
+def find_peaks(curve: list[float], max_meals: int = 6, min_separation_bins: int = 3) -> list[int]:
     """Bin indices of meal peaks: circular local maxima, tallest first, spaced.
 
     Returns sorted bin indices of the chosen meal peaks, enforcing minimum
@@ -55,7 +55,7 @@ def find_peaks(curve, max_meals: int = 6, min_separation_bins: int = 3) -> list[
     return sorted(chosen)
 
 
-def split_at_peaks(curve, peaks) -> list[tuple[int, float]]:
+def split_at_peaks(curve: list[float], peaks: list[int]) -> list[tuple[int, float]]:
     """Fraction of the day's food per peak, by mass nearest each peak."""
     if not peaks:
         return []

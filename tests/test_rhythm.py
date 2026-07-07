@@ -5,6 +5,7 @@ def test_curve_length_and_bucketing():
     # one visit at 08:00 (minute 480) -> bin 16 (480//30)
     curve = circadian_curve([(480, 10)], bins=48, smooth=0)
     assert len(curve) == 48
+    assert len(curve) == BINS
     assert curve[16] == 10.0
     assert sum(curve) == 10.0
 
@@ -46,6 +47,18 @@ def test_find_peaks_enforces_separation():
     curve[30] = 8.0
     peaks = find_peaks(curve, max_meals=6, min_separation_bins=3)
     assert peaks == [10, 30]
+
+
+def test_find_peaks_excludes_true_peak_within_separation():
+    # bins 10 and 12 are both genuine local maxima (11 is a zero valley),
+    # but they're only 2 bins apart < min_separation_bins=3, so the
+    # shorter one (12) must be dropped by the _circ_dist separation rule,
+    # NOT by the local-maximum test.
+    curve = [0.0] * 48
+    curve[10] = 10.0
+    curve[12] = 9.0
+    peaks = find_peaks(curve, max_meals=6, min_separation_bins=3)
+    assert peaks == [10]
 
 
 def test_find_peaks_empty_curve():

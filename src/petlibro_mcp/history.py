@@ -36,7 +36,7 @@ def time_of_day_minutes(format_record_time: str) -> int | None:
     return h * 60 + mn
 
 
-def parse_work_record(days) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+def parse_work_record(days: list[dict] | None) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Split day-grouped workRecords into (eats, dispenses) event series.
 
     eats: (minute_of_day, eating_duration_s); dispenses: (minute_of_day, grain).

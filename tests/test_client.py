@@ -59,6 +59,7 @@ async def test_work_record_posts_expected_payload():
     client = PetLibroClient(_cfg(), api=api)
     out = await client.work_record("SN-1", days=30, size=500)
     assert out == [{"workRecords": []}]
+    api.login.assert_awaited()
     args, kwargs = api.session.request.call_args
     assert args[0] == "POST" and args[1] == "/device/workRecord/list"
     body = kwargs["json"]
@@ -72,4 +73,5 @@ async def test_feeding_plans_delegates_to_api():
     client = PetLibroClient(_cfg(), api=api)
     out = await client.feeding_plans("SN-1")
     assert out == [{"executionTime": "08:00", "grainNum": 3}]
+    api.login.assert_awaited()
     api.get_feeding_plans.assert_awaited_once_with("SN-1")

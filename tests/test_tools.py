@@ -182,3 +182,15 @@ async def test_analyze_rhythm_surfaces_fetch_failure():
     client.work_record = AsyncMock(side_effect=RuntimeError("offline"))
     res = await tools.analyze_rhythm(cfg(), client, "ferris")
     assert res[0]["ok"] is False and "offline" in res[0]["error"]
+
+
+async def test_analyze_rhythm_treats_missing_enable_as_enabled():
+    # a plan row with no "enable" key at all must still count toward the
+    # daily total (p.get("enable", True) default), not be silently dropped.
+    client = _client_for_analyze()
+    client.feeding_plans = AsyncMock(return_value=[
+        {"executionTime": "09:00", "grainNum": 4},
+    ])
+    res = await tools.analyze_rhythm(cfg(), client, "ferris")
+    assert res[0]["ok"] is True
+    assert res[0]["daily_total_portions"] == 4

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 
-def allocate_portions(fractions, total: int) -> list[int]:
+def allocate_portions(fractions: list[float], total: int) -> list[int]:
     """Distribute `total` integer portions across `fractions` (largest remainder)."""
     if not fractions:
         return []
@@ -15,7 +15,7 @@ def allocate_portions(fractions, total: int) -> list[int]:
     return floors
 
 
-def plan_rows(split, total_portions: int) -> list[tuple[str, int]]:
+def plan_rows(split: list[tuple[int, float]], total_portions: int) -> list[tuple[str, int]]:
     """('HH:MM', grain) rows for each meal, dropping any that round to zero."""
     fractions = [f for _, f in split]
     portions = allocate_portions(fractions, total_portions)
