@@ -5,6 +5,7 @@ from .client import PetLibroClient
 from .history import parse_work_record
 from .rhythm import circadian_curve, find_peaks, split_at_peaks
 from .planner import plan_rows
+from .schedule_diff import diff_schedule
 
 
 async def feed(config: Config, client: PetLibroClient, pets, cups: float,
@@ -163,6 +164,83 @@ async def analyze_rhythm(config: Config, client: PetLibroClient,
                 "current_schedule": [{"time": t, "portions": g} for t, g in rc["current"]],
                 "recommended_schedule": [{"time": t, "portions": g} for t, g in rc["target_rows"]],
             })
+        except Exception as exc:  # surface, never swallow
+            results.append({"pet": f.name, "serial": f.serial, "ok": False,
+                            "error": f"{type(exc).__name__}: {exc}"})
+    return results
+
+
+async def _apply_actions(client, serial: str, actions: dict) -> None:
+    for pid in actions["removes"]:
+        await client.remove_plan(serial, pid)
+    for plan in actions["updates"]:
+        await client.update_plan(serial, plan)
+    for plan in actions["adds"]:
+        await client.add_plan(serial, plan)
+
+
+def _enabled_pairs(plans) -> list[tuple[str, int]]:
+    return sorted((p.get("executionTime"), int(p.get("grainNum") or 0))
+                  for p in plans if p.get("enable", True))
+
+
+async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
+    """Restore `snapshot` by removing current enabled rows and re-adding the snapshot.
+    Returns True if the readback matches the snapshot."""
+    current = [p for p in await client.feeding_plans(serial) if p.get("enable", True)]
+    for p in current:
+        await client.remove_plan(serial, p["id"])
+    for p in snapshot:
+        await client.add_plan(serial, p)
+    got = _enabled_pairs(await client.feeding_plans(serial))
+    want = sorted((p.get("executionTime"), int(p.get("grainNum") or 0)) for p in snapshot)
+    return got == want
+
+
+async def apply_schedule(config: Config, client: PetLibroClient,
+                         pet, days: int = 60, apply: bool = False) -> list[dict]:
+    try:
+        feeders = config.resolve_feeders([pet] if isinstance(pet, str) else pet)
+    except UnknownPetError as e:
+        return [{"pet": None, "serial": None, "ok": False, "error": str(e)}]
+
+    results = []
+    for f in feeders:
+        try:
+            rc = await _compute_rhythm(client, f, days)
+            enabled, target_rows, total = rc["enabled"], rc["target_rows"], rc["total"]
+            target_total = sum(g for _, g in target_rows)
+            if target_total > total:
+                results.append({"pet": f.name, "serial": f.serial, "ok": False,
+                    "error": (f"Refusing: target total {target_total} exceeds "
+                              f"current {total} portions.")})
+                continue
+
+            actions = diff_schedule(enabled, target_rows)
+            if not apply:
+                results.append({
+                    "pet": f.name, "serial": f.serial, "ok": True, "dry_run": True,
+                    "would_update": actions["updates"], "would_add": actions["adds"],
+                    "would_remove": actions["removes"],
+                    "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]})
+                continue
+
+            snapshot = [dict(p) for p in enabled]
+            await _apply_actions(client, f.serial, actions)
+            got = _enabled_pairs(await client.feeding_plans(f.serial))
+            want = sorted((t, g) for t, g in target_rows)
+            if got == want:
+                results.append({"pet": f.name, "serial": f.serial, "ok": True,
+                    "applied": True,
+                    "schedule": [{"time": t, "portions": g} for t, g in want]})
+            else:
+                rolled = await _rollback(client, f.serial, snapshot)
+                results.append({"pet": f.name, "serial": f.serial, "ok": False,
+                    "error": ("Verify failed after apply; rolled back to snapshot."
+                              if rolled else
+                              "Verify failed AND rollback failed — restore manually from snapshot."),
+                    "expected": want, "got": got,
+                    "snapshot": None if rolled else snapshot})
         except Exception as exc:  # surface, never swallow
             results.append({"pet": f.name, "serial": f.serial, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})

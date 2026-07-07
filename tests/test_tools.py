@@ -204,3 +204,81 @@ async def test_compute_rhythm_returns_enabled_and_target():
     assert rc["eating_visits"] == 10
     assert len(rc["enabled"]) == 2          # disabled row excluded
     assert sum(g for _, g in rc["target_rows"]) == 5
+
+
+class _FakePlanClient:
+    """Stateful fake: holds a plan list, mutates it via the write methods."""
+    def __init__(self, plans, work, drop_writes=False):
+        self._plans = [dict(p) for p in plans]
+        self._work = work
+        self._next_id = max([p["id"] for p in self._plans], default=0) + 1
+        self.drop_writes = drop_writes  # simulate a cloud that silently ignores writes
+    async def work_record(self, serial, days=60):
+        return self._work
+    async def feeding_plans(self, serial):
+        return [dict(p) for p in self._plans]
+    async def update_plan(self, serial, plan):
+        if self.drop_writes:
+            return
+        for p in self._plans:
+            if p["id"] == plan["id"]:
+                p.update({"executionTime": plan["executionTime"], "grainNum": plan["grainNum"]})
+    async def add_plan(self, serial, plan):
+        if self.drop_writes:
+            return
+        self._plans.append({"id": self._next_id, "enable": True, **plan})
+        self._next_id += 1
+    async def remove_plan(self, serial, plan_id):
+        if self.drop_writes:
+            return
+        self._plans = [p for p in self._plans if p["id"] != plan_id]
+
+
+def _plan(id, t, g, enable=True):
+    return {"id": id, "executionTime": t, "grainNum": g, "enable": enable,
+            "repeatDay": "[1,2,3,4,5,6,7]", "label": "", "enableAudio": False, "audioTimes": 2}
+
+
+async def test_apply_dry_run_previews_without_writing():
+    # 10 visits @ 08:00 (one peak); current 3+2 -> total 5 -> target one meal of 5 @ 08:00
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    res = await tools.apply_schedule(cfg(), client, "ferris")  # apply defaults False
+    r = res[0]
+    assert r["ok"] is True and r["dry_run"] is True
+    assert sum(x["portions"] for x in r["target_schedule"]) == 5
+    # nothing was written: the plan list is unchanged
+    plans = await client.feeding_plans("x")
+    assert {(p["executionTime"], p["grainNum"]) for p in plans} == {("08:00", 3), ("20:00", 2)}
+
+
+async def test_apply_writes_verifies_and_reports_applied():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is True and r.get("applied") is True
+    # resulting enabled schedule matches the rhythm target (total preserved = 5)
+    got = sorted((x["time"], x["portions"]) for x in r["schedule"])
+    assert sum(g for _, g in got) == 5
+
+
+async def test_apply_rolls_back_when_verify_fails():
+    # drop_writes: writes are silently ignored -> readback won't match -> rollback path
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), drop_writes=True)
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is False
+    assert "erify" in r["error"]  # "Verify failed..."
+
+
+async def test_apply_refuses_when_target_exceeds_current(monkeypatch):
+    client = _FakePlanClient([_plan(1, "08:00", 5)], _work_record_days())
+    monkeypatch.setattr(tools, "plan_rows", lambda split, total: [("08:00", total + 5)])
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    assert res[0]["ok"] is False and "Refusing" in res[0]["error"]
+
+
+async def test_apply_unknown_pet_errors():
+    client = _FakePlanClient([], _work_record_days())
+    res = await tools.apply_schedule(cfg(), client, "mittens", apply=True)
+    assert res[0]["ok"] is False and "mittens" in res[0]["error"]
