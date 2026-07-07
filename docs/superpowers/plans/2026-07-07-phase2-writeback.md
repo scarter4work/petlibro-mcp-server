@@ -64,11 +64,12 @@ async def test_add_plan_posts_with_id_zero():
             "repeatDay": "[1,2,3,4,5,6,7]", "label": "", "enableAudio": False,
             "audioTimes": 2}
     await client.add_plan("SN-1", plan)
-    _, kwargs = api.session.post.call_args
-    body = kwargs["json"]
-    assert body["id"] == 0 and body["deviceSn"] == "SN-1"
-    assert body["executionTime"] == "20:00" and body["grainNum"] == 2
-    assert body["enable"] is True and body["petIds"] == []
+    api.login.assert_awaited()  # ensure_login gate
+    api.session.post.assert_awaited_once_with("/device/feedingPlan/add", json={
+        "id": 0, "deviceSn": "SN-1", "executionTime": "20:00",
+        "repeatDay": "[1,2,3,4,5,6,7]", "label": "", "enable": True,
+        "enableAudio": False, "audioTimes": 2, "grainNum": 2, "petIds": [],
+    })
 
 
 async def test_remove_plan_posts_plan_id():
@@ -76,6 +77,7 @@ async def test_remove_plan_posts_plan_id():
     api.session.post = AsyncMock(return_value=None)
     client = PetLibroClient(_cfg(), api=api)
     await client.remove_plan("SN-1", 42)
+    api.login.assert_awaited()  # ensure_login gate
     api.session.post.assert_awaited_once_with("/device/feedingPlan/remove", json={
         "deviceSn": "SN-1", "planId": 42,
     })
