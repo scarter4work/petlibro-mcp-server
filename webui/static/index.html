@@ -1,2 +1,740 @@
-<!doctype html><html><head><meta charset="utf-8"><title>PetLibro Rhythm</title></head>
-<body><div id="app">loading…</div></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PetLibro Rhythm</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<style>
+  :root{
+    --bg:#F5EDE0; --surface:#FFFCF5; --surface-2:#FBF4E6;
+    --ink:#2B2420; --ink-soft:#7A6E5C; --ink-faint:#A79A85;
+    --teal:#2F5D5A; --teal-dark:#22423F; --teal-tint:#E4EEEC;
+    --gold:#C98A12; --gold-strong:#B9860F; --gold-tint:#FBEDCE;
+    --rust:#B14A26; --rust-tint:#F7E4DB;
+    --sage:#5F7D53; --sage-tint:#E7EEE1;
+    --line:#E6D9C2;
+    --shadow:0 1px 2px rgba(43,36,32,.05), 0 10px 28px -16px rgba(43,36,32,.32);
+    --radius:14px; --radius-sm:9px;
+    --sidebar-bg:#22322F; --sidebar-ink:#F1EADA; --sidebar-ink-soft:#B7C4BE;
+    --sidebar-line:rgba(255,255,255,.08); --sidebar-active-bg:#2F453F;
+    --font-display:'Iowan Old Style','Palatino Linotype',Georgia,'Noto Serif',serif;
+    --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1B2422; --surface:#232E2B; --surface-2:#293733;
+      --ink:#F1E9D8; --ink-soft:#C4B9A4; --ink-faint:#8A9A93;
+      --teal:#8FC0B8; --teal-dark:#22423F; --teal-tint:#2B3B37;
+      --gold:#E7B54A; --gold-strong:#F2CE79; --gold-tint:#3A3020;
+      --rust:#E48861; --rust-tint:#3B2A22;
+      --sage:#9BBE8C; --sage-tint:#26332A;
+      --line:#3B4744;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -16px rgba(0,0,0,.65);
+      --sidebar-bg:#141C1A; --sidebar-ink:#F1EADA; --sidebar-ink-soft:#93A69E;
+      --sidebar-line:rgba(255,255,255,.06); --sidebar-active-bg:#1E2C29;
+    }
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink); font-family:var(--font-body);
+    font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  #app{display:flex; min-height:100vh;}
+  a{color:inherit;}
+  button{font-family:inherit;}
+  ::selection{background:var(--gold-tint); color:var(--ink);}
+  :focus-visible{outline:2px solid var(--gold); outline-offset:2px; border-radius:4px;}
+
+  /* ---------- Sidebar ---------- */
+  #sidebar{
+    width:250px; flex:0 0 250px; background:var(--sidebar-bg); color:var(--sidebar-ink);
+    display:flex; flex-direction:column; padding:22px 0 18px;
+    box-shadow:1px 0 0 var(--sidebar-line);
+  }
+  .brand{padding:0 20px 18px; border-bottom:1px solid var(--sidebar-line); margin-bottom:8px;}
+  .brand-mark{font-size:22px; line-height:1;}
+  .brand-title{
+    font-family:var(--font-display); font-size:20px; font-weight:600;
+    margin:6px 0 2px; letter-spacing:.01em;
+  }
+  .brand-sub{font-size:11.5px; color:var(--sidebar-ink-soft); text-transform:uppercase; letter-spacing:.09em;}
+  .pet-list{list-style:none; margin:10px 0 0; padding:0 10px; flex:1; overflow-y:auto;}
+  .pet-list-label{
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.1em; color:var(--sidebar-ink-soft);
+    padding:8px 10px 6px;
+  }
+  .pet-row{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:none; border:0; border-left:3px solid transparent; color:var(--sidebar-ink);
+    padding:10px 10px 10px 9px; border-radius:0 8px 8px 0; cursor:pointer;
+    font-size:14.5px; margin-bottom:2px; transition:background .12s ease, border-color .12s ease;
+  }
+  .pet-row:hover{background:rgba(255,255,255,.05);}
+  .pet-row.active{background:var(--sidebar-active-bg); border-left-color:var(--gold); font-weight:600;}
+  .pet-row .glyph{font-size:16px; flex:0 0 auto;}
+  .pet-row .pname{font-family:var(--font-display); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .sidebar-foot{padding:14px 20px 0; font-size:11px; color:var(--sidebar-ink-soft); border-top:1px solid var(--sidebar-line); margin-top:8px;}
+
+  /* ---------- Main ---------- */
+  #main{flex:1; min-width:0; padding:28px 34px 60px; max-width:980px;}
+  .banner{
+    display:flex; gap:10px; align-items:flex-start; padding:13px 16px; border-radius:var(--radius-sm);
+    margin-bottom:18px; font-size:14px; line-height:1.45;
+  }
+  .banner-error{background:var(--rust-tint); color:var(--rust); border:1px solid color-mix(in srgb, var(--rust) 35%, transparent);}
+  .banner-success{background:var(--sage-tint); color:var(--sage); border:1px solid color-mix(in srgb, var(--sage) 35%, transparent);}
+  .banner-icon{flex:0 0 auto; font-size:16px;}
+  .banner strong{font-weight:700;}
+  .banner[hidden]{display:none;}
+
+  .empty-state{
+    display:flex; flex-direction:column; align-items:flex-start; gap:8px;
+    padding:60px 10px; color:var(--ink-soft); max-width:420px;
+  }
+  .empty-state .glyph{font-size:34px;}
+  .empty-state h2{font-family:var(--font-display); font-size:21px; margin:2px 0 0; color:var(--ink);}
+  .empty-state p{margin:0; font-size:14px;}
+
+  .pet-header{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:20px;}
+  .pet-header h1{font-family:var(--font-display); font-size:30px; font-weight:600; margin:0;}
+  .serial-badge{
+    font-family:var(--font-mono); font-size:11.5px; color:var(--ink-soft); background:var(--surface-2);
+    border:1px solid var(--line); padding:3px 9px; border-radius:20px;
+  }
+  .loading-tag{font-size:12.5px; color:var(--ink-faint); font-style:italic;}
+
+  .stack{display:flex; flex-direction:column; gap:22px;}
+
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+    box-shadow:var(--shadow); padding:22px 24px;
+  }
+  .card h2{
+    font-family:var(--font-display); font-size:17px; font-weight:600; margin:0 0 3px;
+  }
+  .card .card-caption{font-size:12.5px; color:var(--ink-soft); margin:0 0 16px;}
+
+  /* stat chips */
+  .chips{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px;}
+  .chip{
+    display:flex; align-items:baseline; gap:6px; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:20px; padding:7px 14px;
+  }
+  .chip .chip-num{font-family:var(--font-mono); font-weight:700; font-size:15px; color:var(--teal-dark, var(--teal));}
+  @media (prefers-color-scheme: dark){ .chip .chip-num{ color:var(--teal); } }
+  .chip .chip-label{font-size:12px; color:var(--ink-soft);}
+
+  /* trend chart */
+  .chart-wrap{width:100%; overflow-x:auto;}
+  svg.trend{width:100%; height:auto; display:block; min-width:420px;}
+  .peak-note{font-size:12px; color:var(--ink-soft); margin-top:6px;}
+  .peak-note b{color:var(--rust); font-weight:600;}
+
+  /* schedule editor */
+  .compare-grid{display:grid; grid-template-columns:1fr 1fr; gap:22px;}
+  @media (max-width:680px){ .compare-grid{grid-template-columns:1fr;} }
+  .compare-col h3{
+    font-size:11.5px; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft);
+    margin:0 0 10px; display:flex; align-items:center; gap:6px;
+  }
+  .compare-col h3 .dot{width:8px; height:8px; border-radius:50%; display:inline-block;}
+  .dot-now{background:var(--teal);}
+  .dot-proposed{background:var(--gold);}
+  .sched-row{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:9px 0; border-bottom:1px solid var(--line);
+  }
+  .sched-row:last-child{border-bottom:0;}
+  .sched-time{font-family:var(--font-mono); font-size:14px; color:var(--ink);}
+  .sched-portions{font-family:var(--font-mono); font-size:14px; font-weight:700;}
+  .empty-row{color:var(--ink-faint); font-size:13px; font-style:italic; padding:9px 0;}
+
+  .stepper{display:flex; align-items:center; gap:6px;}
+  .stepper-btn{
+    width:26px; height:26px; border-radius:7px; border:1px solid var(--line); background:var(--surface-2);
+    color:var(--ink); font-size:15px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  }
+  .stepper-btn:hover{background:var(--gold-tint); border-color:var(--gold);}
+  .stepper-input{
+    width:44px; text-align:center; font-family:var(--font-mono); font-size:14px; font-weight:700;
+    border:1px solid var(--line); border-radius:7px; padding:4px 2px; background:var(--surface); color:var(--ink);
+  }
+
+  .total-row{
+    display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
+    margin-top:18px; padding-top:16px; border-top:1px dashed var(--line);
+  }
+  .total-readout{font-size:13.5px; color:var(--ink-soft);}
+  .total-readout b{font-family:var(--font-mono); font-size:16px; color:var(--ink); font-weight:700;}
+  .total-arrow{color:var(--ink-faint); margin:0 4px;}
+  .total-over b{color:var(--rust);}
+
+  .warn-inline{
+    display:flex; gap:8px; align-items:flex-start; margin-top:12px; padding:10px 12px;
+    background:var(--rust-tint); color:var(--rust); border-radius:var(--radius-sm); font-size:13px;
+  }
+  .warn-inline[hidden]{display:none;}
+
+  .note-empty{
+    background:var(--surface-2); border:1px dashed var(--line); border-radius:var(--radius-sm);
+    padding:16px; font-size:13.5px; color:var(--ink-soft);
+  }
+
+  /* actions */
+  .actions-row{display:flex; gap:10px; flex-wrap:wrap; align-items:center;}
+  .btn{
+    font-size:13.5px; font-weight:600; padding:10px 18px; border-radius:20px; border:1px solid transparent;
+    cursor:pointer; transition:transform .06s ease, box-shadow .12s ease; letter-spacing:.01em;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn:disabled{opacity:.45; cursor:not-allowed;}
+  .btn-ghost{background:var(--surface); border-color:var(--line); color:var(--ink);}
+  .btn-ghost:hover:not(:disabled){border-color:var(--teal); color:var(--teal-dark);}
+  @media (prefers-color-scheme: dark){ .btn-ghost:hover:not(:disabled){ color:var(--teal); } }
+  .btn-primary{background:var(--gold); color:#241a02; border-color:var(--gold-strong);}
+  .btn-primary:hover:not(:disabled){box-shadow:0 4px 14px -4px color-mix(in srgb, var(--gold) 60%, transparent);}
+  .btn-danger-confirm{background:var(--rust); color:#fff; border-color:var(--rust);}
+  .btn-text{background:none; border:0; color:var(--ink-soft); text-decoration:underline; padding:8px 4px;}
+
+  .confirm-strip{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--surface-2);
+    border:1px solid var(--line); border-radius:20px; padding:6px 6px 6px 14px; font-size:13.5px;
+  }
+
+  .result-panel{margin-top:18px; border-top:1px solid var(--line); padding-top:16px;}
+  .result-panel h4{font-size:12.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--ink-soft); margin:0 0 8px;}
+  .diff-cols{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px;}
+  @media (max-width:680px){ .diff-cols{grid-template-columns:1fr;} }
+  .diff-col{background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px;}
+  .diff-col h5{margin:0 0 8px; font-size:12px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.06em;}
+  .diff-col ul{margin:0; padding:0; list-style:none; font-family:var(--font-mono); font-size:12.5px;}
+  .diff-col li{padding:3px 0;}
+  .diff-empty{color:var(--ink-faint); font-style:italic; font-family:var(--font-body); font-size:12.5px;}
+
+  .skeleton{
+    height:120px; border-radius:var(--radius-sm); background:linear-gradient(90deg, var(--surface-2) 25%, var(--line) 37%, var(--surface-2) 63%);
+    background-size:400% 100%; animation:shimmer 1.4s ease infinite;
+  }
+  @media (prefers-reduced-motion: reduce){
+    .skeleton{animation:none;}
+    *{transition:none !important; animation:none !important;}
+  }
+  @keyframes shimmer{ 0%{background-position:100% 0;} 100%{background-position:0 0;} }
+
+  @media (max-width:820px){
+    #app{flex-direction:column;}
+    #sidebar{width:100%; flex:0 0 auto; flex-direction:row; align-items:center; padding:14px 14px; overflow-x:auto;}
+    .brand{border-bottom:0; padding:0 14px 0 0; margin-bottom:0; flex:0 0 auto;}
+    .pet-list{display:flex; flex:0 0 auto; padding:0; gap:6px; overflow-x:auto;}
+    .pet-list-label{display:none;}
+    .pet-row{border-left:0; border-bottom:3px solid transparent; white-space:nowrap;}
+    .pet-row.active{border-bottom-color:var(--gold);}
+    .sidebar-foot{display:none;}
+    #main{padding:22px 18px 50px;}
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <aside id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🐾</div>
+      <div class="brand-title">PetLibro Rhythm</div>
+      <div class="brand-sub">feeding dashboard</div>
+    </div>
+    <div class="pet-list-label">The pantry shelf</div>
+    <ul class="pet-list" id="pet-list" role="listbox" aria-label="Pets"></ul>
+    <div class="sidebar-foot">Reads &amp; writes go straight to your feeders on the LAN.</div>
+  </aside>
+
+  <main id="main">
+    <div class="banner banner-error" id="error-banner" hidden role="alert">
+      <span class="banner-icon">⚠</span>
+      <span id="error-banner-text"></span>
+    </div>
+
+    <div id="empty-state" class="empty-state">
+      <div class="glyph">🥣</div>
+      <h2>Pick a cat to begin</h2>
+      <p>Choose a name from the pantry shelf on the left to see when they actually eat, and tune their feeding schedule to match.</p>
+    </div>
+
+    <div id="pet-view" class="stack" hidden></div>
+  </main>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var state = {
+    pets: [],
+    selected: null,
+    analysis: null,
+    edited: [],
+    requestToken: 0,
+    confirmingSave: false,
+    resultPanel: null
+  };
+
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
+    });
+  }
+
+  var API = {
+    pets: function(){
+      return fetch("/api/pets").then(function(r){ return r.json(); });
+    },
+    analysis: function(name, days){
+      var q = days ? ("?days=" + encodeURIComponent(days)) : "";
+      return fetch("/api/pets/" + encodeURIComponent(name) + "/analysis" + q)
+        .then(function(r){ return r.json(); });
+    },
+    apply: function(name, schedule, applyFlag){
+      return fetch("/api/pets/" + encodeURIComponent(name) + "/apply", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({schedule: schedule, apply: applyFlag})
+      }).then(function(r){ return r.json(); });
+    }
+  };
+
+  var errorBanner = document.getElementById("error-banner");
+  var errorBannerText = document.getElementById("error-banner-text");
+  var emptyState = document.getElementById("empty-state");
+  var petView = document.getElementById("pet-view");
+  var petListEl = document.getElementById("pet-list");
+
+  function showError(msg){
+    errorBannerText.textContent = msg;
+    errorBanner.hidden = false;
+  }
+  function clearError(){
+    errorBanner.hidden = true;
+    errorBannerText.textContent = "";
+  }
+
+  // ---------- Sidebar ----------
+  function renderSidebar(){
+    petListEl.innerHTML = state.pets.map(function(p){
+      var active = state.selected === p.name;
+      return '<li role="option" aria-selected="' + (active ? "true" : "false") + '">' +
+        '<button class="pet-row' + (active ? " active" : "") + '" data-pet="' + esc(p.name) + '">' +
+          '<span class="glyph">' + (active ? "🐱" : "🐾") + '</span>' +
+          '<span class="pname">' + esc(p.name) + '</span>' +
+        '</button></li>';
+    }).join("");
+  }
+
+  petListEl.addEventListener("click", function(ev){
+    var btn = ev.target.closest(".pet-row");
+    if (!btn) return;
+    selectPet(btn.getAttribute("data-pet"));
+  });
+
+  // ---------- Trend chart ----------
+  function formatBinTime(binIndex){
+    var minutes = binIndex * 30;
+    var hh = Math.floor(minutes / 60);
+    var mm = minutes % 60;
+    var period = hh >= 12 ? "PM" : "AM";
+    var h12 = hh % 12; if (h12 === 0) h12 = 12;
+    return h12 + (mm ? (":" + (mm < 10 ? "0" : "") + mm) : "") + " " + period;
+  }
+
+  function buildTrendChart(curve, petName){
+    var W = 720, H = 200;
+    var marginLeft = 14, marginRight = 14, marginTop = 12, marginBottom = 30;
+    var dw = W - marginLeft - marginRight;
+    var dh = H - marginTop - marginBottom;
+    var baseline = marginTop + dh;
+    var n = curve.length || 48;
+    var max = 0;
+    for (var i = 0; i < curve.length; i++) if (curve[i] > max) max = curve[i];
+    if (max <= 0) max = 1;
+
+    function xAt(i){ return marginLeft + ((i + 0.5) / n) * dw; }
+    function yAt(v){ return marginTop + dh - (v / max) * dh; }
+
+    var linePts = [], areaPts = [];
+    var peakIdx = 0, peakVal = -1;
+    for (var i2 = 0; i2 < curve.length; i2++){
+      var x = xAt(i2), y = yAt(curve[i2]);
+      linePts.push(x.toFixed(1) + "," + y.toFixed(1));
+      if (curve[i2] > peakVal){ peakVal = curve[i2]; peakIdx = i2; }
+    }
+    var areaPath = "M" + (marginLeft) + "," + baseline + " L" + linePts.join(" L") +
+      " L" + (marginLeft + dw) + "," + baseline + " Z";
+    var linePath = "M" + linePts.join(" L");
+
+    var ticks = [0, 6, 12, 18, 24].map(function(hr){
+      var x = marginLeft + (hr / 24) * dw;
+      var label = hr === 0 || hr === 24 ? "12a" : (hr === 12 ? "12p" : (hr < 12 ? hr + "a" : (hr - 12) + "p"));
+      return {x: x, label: label};
+    });
+
+    var gridLines = ticks.map(function(t){
+      return '<line x1="' + t.x.toFixed(1) + '" y1="' + marginTop + '" x2="' + t.x.toFixed(1) + '" y2="' + baseline +
+        '" stroke="var(--line)" stroke-width="1" />';
+    }).join("");
+
+    var tickLabels = ticks.map(function(t){
+      return '<text x="' + t.x.toFixed(1) + '" y="' + (H - 8) + '" font-family="var(--font-mono)" font-size="10.5" ' +
+        'fill="var(--ink-soft)" text-anchor="middle">' + t.label + '</text>';
+    }).join("");
+
+    var px = xAt(peakIdx), py = yAt(peakVal);
+    var peakMarker = '<circle cx="' + px.toFixed(1) + '" cy="' + py.toFixed(1) + '" r="3.5" fill="var(--rust)" ' +
+      'stroke="var(--surface)" stroke-width="1.5" />';
+
+    var gradId = "trendFill";
+    var svg = '<svg class="trend" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="xMidYMid meet" role="img" ' +
+      'aria-label="Eating intensity across a 24 hour day for ' + esc(petName) + '">' +
+      '<defs><linearGradient id="' + gradId + '" x1="0" y1="0" x2="0" y2="1">' +
+        '<stop offset="0%" stop-color="var(--gold)" stop-opacity="0.55" />' +
+        '<stop offset="100%" stop-color="var(--gold)" stop-opacity="0.04" />' +
+      '</linearGradient></defs>' +
+      gridLines +
+      '<path d="' + areaPath + '" fill="url(#' + gradId + ')" stroke="none" />' +
+      '<path d="' + linePath + '" fill="none" stroke="var(--rust)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />' +
+      peakMarker +
+      '<line x1="' + marginLeft + '" y1="' + baseline + '" x2="' + (marginLeft + dw) + '" y2="' + baseline + '" stroke="var(--ink-faint)" stroke-width="1" />' +
+      tickLabels +
+    '</svg>';
+
+    return {svg: svg, peakLabel: formatBinTime(peakIdx)};
+  }
+
+  // ---------- Schedule editor ----------
+  function scheduleTotal(rows){
+    return rows.reduce(function(sum, r){ return sum + (Number(r.portions) || 0); }, 0);
+  }
+
+  function renderNowColumn(rows){
+    if (!rows.length){
+      return '<div class="empty-row">No schedule set on the feeder yet.</div>';
+    }
+    return rows.map(function(r){
+      return '<div class="sched-row"><span class="sched-time">' + esc(r.time) + '</span>' +
+        '<span class="sched-portions">' + esc(r.portions) + '</span></div>';
+    }).join("");
+  }
+
+  function renderProposedColumn(rows){
+    if (!rows.length){
+      return '<div class="empty-row">Nothing proposed.</div>';
+    }
+    return rows.map(function(r, i){
+      return '<div class="sched-row">' +
+        '<span class="sched-time">' + esc(r.time) + '</span>' +
+        '<div class="stepper" data-idx="' + i + '">' +
+          '<button class="stepper-btn" type="button" data-action="dec" aria-label="Decrease portions for ' + esc(r.time) + '">&minus;</button>' +
+          '<input class="stepper-input" type="number" min="0" max="30" step="1" value="' + esc(r.portions) + '" inputmode="numeric" aria-label="Portions at ' + esc(r.time) + '">' +
+          '<button class="stepper-btn" type="button" data-action="inc" aria-label="Increase portions for ' + esc(r.time) + '">&plus;</button>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function currentDailyTotal(){
+    return state.analysis ? (state.analysis.daily_total_portions || 0) : 0;
+  }
+
+  function refreshTotals(){
+    var total = scheduleTotal(state.edited);
+    var currentTotal = currentDailyTotal();
+    var over = total > currentTotal;
+
+    var readout = document.getElementById("total-readout");
+    if (readout){
+      readout.innerHTML = 'Daily total &nbsp;<b>' + currentTotal + '</b><span class="total-arrow">&rarr;</span><b>' + total + '</b>' + ' portions';
+      readout.parentElement.classList.toggle("total-over", over);
+    }
+    var warn = document.getElementById("total-warn");
+    if (warn) warn.hidden = !over;
+
+    var saveBtn = document.getElementById("btn-save");
+    if (saveBtn) saveBtn.disabled = over || state.edited.length === 0;
+  }
+
+  function attachStepperHandlers(container){
+    container.addEventListener("click", function(ev){
+      var btn = ev.target.closest(".stepper-btn");
+      if (!btn) return;
+      var wrap = btn.closest(".stepper");
+      var idx = Number(wrap.getAttribute("data-idx"));
+      var delta = btn.getAttribute("data-action") === "inc" ? 1 : -1;
+      var next = Math.max(0, (Number(state.edited[idx].portions) || 0) + delta);
+      state.edited[idx].portions = next;
+      wrap.querySelector(".stepper-input").value = next;
+      refreshTotals();
+    });
+    container.addEventListener("change", function(ev){
+      var input = ev.target.closest(".stepper-input");
+      if (!input) return;
+      var wrap = input.closest(".stepper");
+      var idx = Number(wrap.getAttribute("data-idx"));
+      var next = Math.max(0, Math.round(Number(input.value) || 0));
+      state.edited[idx].portions = next;
+      input.value = next;
+      refreshTotals();
+    });
+  }
+
+  // ---------- Actions / results ----------
+  function renderDiffList(items, formatter){
+    if (!items || !items.length) return '<div class="diff-empty">None</div>';
+    return "<ul>" + items.map(function(x){ return "<li>" + formatter(x) + "</li>"; }).join("") + "</ul>";
+  }
+
+  function renderPreviewResult(res){
+    if (res.ok === false){
+      state.resultPanel = '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span><span>' +
+        esc(res.error || "Preview failed.") + "</span></div>";
+      renderMain();
+      return;
+    }
+    var updates = renderDiffList(res.would_update, function(u){
+      return esc(u.executionTime) + " &rarr; <b>" + esc(u.grainNum) + "</b> portions";
+    });
+    var adds = renderDiffList(res.would_add, function(a){
+      return esc(a.executionTime) + " &mdash; <b>" + esc(a.grainNum) + "</b> portions (new)";
+    });
+    var removes = renderDiffList(res.would_remove, function(id){
+      return "row id " + esc(id) + " removed";
+    });
+    state.resultPanel =
+      '<div class="result-panel"><h4>Preview &mdash; nothing written yet</h4>' +
+      '<div class="diff-cols">' +
+        '<div class="diff-col"><h5>Update</h5>' + updates + '</div>' +
+        '<div class="diff-col"><h5>Add</h5>' + adds + '</div>' +
+        '<div class="diff-col"><h5>Remove</h5>' + removes + '</div>' +
+      '</div></div>';
+    renderMain();
+  }
+
+  function renderApplyResult(res){
+    if (res.ok === true && res.applied){
+      state.resultPanel = '<div class="banner banner-success"><span class="banner-icon">✓</span>' +
+        '<span><strong>Saved.</strong> The new schedule is live on the feeder.</span></div>';
+    } else {
+      state.resultPanel = '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span>' +
+        '<span>' + esc(res.error || "Save failed.") + "</span></div>";
+    }
+    state.confirmingSave = false;
+    renderMain();
+  }
+
+  // ---------- Main render ----------
+  function renderPetView(){
+    var a = state.analysis;
+    if (!a){
+      petView.innerHTML = '<div class="skeleton"></div>';
+      return;
+    }
+    if (a.ok === false){
+      petView.innerHTML =
+        '<div class="pet-header"><h1>' + esc(state.selected) + '</h1></div>' +
+        '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span><span>' + esc(a.error || "Could not load analysis.") + '</span></div>';
+      return;
+    }
+
+    var chart = buildTrendChart(a.rhythm_curve || [], a.pet);
+    var hasRecommendation = (a.recommended_schedule || []).length > 0;
+
+    var scheduleCardBody;
+    if (!hasRecommendation){
+      scheduleCardBody =
+        '<div class="note-empty">Not enough feeding history yet to recommend a schedule for ' + esc(a.pet) +
+        '. Keep the feeder running &mdash; Rhythm needs a few weeks of visits to learn a pattern.</div>';
+    } else {
+      scheduleCardBody =
+        '<div class="compare-grid">' +
+          '<div class="compare-col"><h3><span class="dot dot-now"></span>Now, on the feeder</h3>' +
+            '<div id="now-col">' + renderNowColumn(a.current_schedule || []) + '</div>' +
+          '</div>' +
+          '<div class="compare-col"><h3><span class="dot dot-proposed"></span>Proposed</h3>' +
+            '<div id="proposed-col">' + renderProposedColumn(state.edited) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="total-row">' +
+          '<div class="total-readout" id="total-readout"></div>' +
+        '</div>' +
+        '<div class="warn-inline" id="total-warn" hidden><span>&#9888;</span>' +
+          '<span>Proposed total exceeds the current daily total &mdash; the feeder will refuse this schedule until you bring it back down.</span></div>';
+    }
+
+    var actionsHtml =
+      '<div class="actions-row" id="actions-row">' +
+        '<button class="btn btn-ghost" id="btn-reanalyze" type="button">&#8635; Reanalyze</button>' +
+        '<button class="btn btn-ghost" id="btn-preview" type="button"' + (hasRecommendation ? "" : " disabled") + '>Preview changes</button>' +
+        '<button class="btn btn-primary" id="btn-save" type="button"' + (hasRecommendation ? "" : " disabled") + '>Save to feeder</button>' +
+      '</div>';
+
+    petView.innerHTML =
+      '<div class="pet-header">' +
+        '<h1>' + esc(a.pet) + '</h1>' +
+        '<span class="serial-badge">' + esc(a.serial) + '</span>' +
+      '</div>' +
+      '<div class="card">' +
+        '<h2>When ' + esc(a.pet) + ' actually eats</h2>' +
+        '<p class="card-caption">Feeder visits over the last ' + esc(a.days || 60) + ' days, in 30-minute bins.</p>' +
+        '<div class="chart-wrap">' + chart.svg + '</div>' +
+        '<p class="peak-note">Busiest bite time: <b>' + chart.peakLabel + '</b></p>' +
+        '<div class="chips">' +
+          '<div class="chip"><span class="chip-num">' + esc(a.eating_visits) + '</span><span class="chip-label">eating visits</span></div>' +
+          '<div class="chip"><span class="chip-num">' + esc(a.daily_total_portions) + '</span><span class="chip-label">portions / day now</span></div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card">' +
+        '<h2>Schedule</h2>' +
+        '<p class="card-caption">Adjust the proposed portions, then preview or save.</p>' +
+        scheduleCardBody +
+      '</div>' +
+      '<div class="card">' +
+        '<h2>Actions</h2>' +
+        actionsHtml +
+        '<div id="result-slot">' + (state.resultPanel || "") + '</div>' +
+      '</div>';
+
+    if (hasRecommendation){
+      var proposedCol = document.getElementById("proposed-col");
+      attachStepperHandlers(proposedCol);
+      refreshTotals();
+    }
+
+    document.getElementById("btn-reanalyze").addEventListener("click", function(){ reanalyze(); });
+    var previewBtn = document.getElementById("btn-preview");
+    if (previewBtn) previewBtn.addEventListener("click", function(){ doPreview(); });
+    var saveBtn = document.getElementById("btn-save");
+    if (saveBtn) saveBtn.addEventListener("click", function(){ startSaveConfirm(); });
+
+    if (state.confirmingSave){
+      renderConfirmStrip();
+    }
+  }
+
+  function renderConfirmStrip(){
+    var actionsRow = document.getElementById("actions-row");
+    if (!actionsRow) return;
+    var strip = document.createElement("div");
+    strip.className = "confirm-strip";
+    strip.innerHTML = 'Write this schedule to ' + esc(state.selected) + "&rsquo;s feeder now?" +
+      ' <button class="btn btn-danger-confirm" id="btn-confirm-yes" type="button">Yes, save</button>' +
+      ' <button class="btn-text" id="btn-confirm-no" type="button">Cancel</button>';
+    actionsRow.parentElement.insertBefore(strip, actionsRow.nextSibling);
+    document.getElementById("btn-confirm-yes").addEventListener("click", function(){ doSave(); });
+    document.getElementById("btn-confirm-no").addEventListener("click", function(){
+      state.confirmingSave = false;
+      renderMain();
+    });
+  }
+
+  function renderMain(){
+    if (!state.selected){
+      emptyState.hidden = false;
+      petView.hidden = true;
+      return;
+    }
+    emptyState.hidden = true;
+    petView.hidden = false;
+    renderPetView();
+  }
+
+  // ---------- Flow ----------
+  function selectPet(name){
+    if (state.selected === name) return;
+    state.selected = name;
+    state.analysis = null;
+    state.edited = [];
+    state.confirmingSave = false;
+    state.resultPanel = null;
+    clearError();
+    renderSidebar();
+    renderMain();
+    loadAnalysis();
+  }
+
+  function loadAnalysis(){
+    var token = ++state.requestToken;
+    var name = state.selected;
+    API.analysis(name, 60).then(function(res){
+      if (token !== state.requestToken) return; // stale response, ignore
+      state.analysis = res;
+      state.edited = (res.recommended_schedule || []).map(function(r){
+        return {time: r.time, portions: r.portions};
+      });
+      state.resultPanel = null;
+      if (res.ok === false) showError(res.error || "Could not load analysis for " + name + ".");
+      else clearError();
+      renderMain();
+    }).catch(function(err){
+      if (token !== state.requestToken) return;
+      state.analysis = {ok: false, error: "Network error while loading analysis: " + err};
+      showError(state.analysis.error);
+      renderMain();
+    });
+  }
+
+  function reanalyze(){
+    state.resultPanel = null;
+    state.confirmingSave = false;
+    loadAnalysis();
+  }
+
+  function doPreview(){
+    if (!state.analysis || !state.analysis.ok) return;
+    var name = state.selected;
+    state.resultPanel = '<p class="loading-tag">Checking with the feeder&hellip;</p>';
+    renderMain();
+    API.apply(name, state.edited, false).then(function(res){
+      if (state.selected !== name) return;
+      if (res.ok === false) showError(res.error || "Preview failed.");
+      renderPreviewResult(res);
+    }).catch(function(err){
+      renderPreviewResult({ok: false, error: "Network error during preview: " + err});
+    });
+  }
+
+  function startSaveConfirm(){
+    state.confirmingSave = true;
+    renderMain();
+  }
+
+  function doSave(){
+    var name = state.selected;
+    state.resultPanel = '<p class="loading-tag">Writing schedule to the feeder&hellip;</p>';
+    state.confirmingSave = false;
+    renderMain();
+    API.apply(name, state.edited, true).then(function(res){
+      if (state.selected !== name) return;
+      if (res.ok === false) showError(res.error || "Save failed.");
+      else clearError();
+      renderApplyResult(res);
+    }).catch(function(err){
+      renderApplyResult({ok: false, error: "Network error while saving: " + err});
+    });
+  }
+
+  // ---------- Boot ----------
+  API.pets().then(function(pets){
+    state.pets = Array.isArray(pets) ? pets : [];
+    renderSidebar();
+    if (!state.pets.length){
+      showError("No pets are configured. Check pets.toml on the server.");
+    }
+  }).catch(function(err){
+    showError("Could not load pets: " + err);
+  });
+
+  renderMain();
+})();
+</script>
+</body>
+</html>
