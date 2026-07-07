@@ -30,7 +30,7 @@ async def test_lists_all_tools():
 
     names = {t.name for t in tools}
     assert names == {"feed", "open_lid", "feeder_status",
-                     "fountain_status", "list_devices", "analyze_rhythm"}
+                     "fountain_status", "list_devices", "analyze_rhythm", "apply_schedule"}
 
 
 def test_load_env_file_populates_environment(tmp_path, monkeypatch):

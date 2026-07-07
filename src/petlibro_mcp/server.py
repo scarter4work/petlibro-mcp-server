@@ -78,6 +78,22 @@ TOOL_DEFS = [
             },
         },
     ),
+    Tool(
+        name="apply_schedule",
+        description=("Write a cat's rhythm-tailored schedule to its feeder. "
+                     "Defaults to a DRY-RUN preview (diff only); pass apply=true "
+                     "to actually write. Snapshots, verifies, and rolls back on "
+                     "mismatch. 'pet' is a single pet name."),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pet": {"type": "string"},
+                "days": {"type": "integer", "default": 60},
+                "apply": {"type": "boolean", "default": False},
+            },
+            "required": ["pet"],
+        },
+    ),
 ]
 
 
@@ -105,6 +121,9 @@ def build_server(config, client: PetLibroClient) -> Server:
         elif name == "analyze_rhythm":
             result = await T.analyze_rhythm(config, client, a.get("pet"),
                                             a.get("days", 60))
+        elif name == "apply_schedule":
+            result = await T.apply_schedule(config, client, a["pet"],
+                                            a.get("days", 60), a.get("apply", False))
         else:
             raise ValueError(f"Unknown tool: {name}")
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
