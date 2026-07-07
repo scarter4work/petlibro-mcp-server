@@ -1,0 +1,16 @@
+[Unit]
+Description=PetLibro Rhythm Feeding Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/petlibro-webui
+Environment=PETLIBRO_PETS_TOML=/opt/petlibro-webui/pets.toml
+Environment=PETLIBRO_ENV=/opt/petlibro-webui/.env
+ExecStart=/opt/petlibro-webui/.venv/bin/uvicorn webui.app:create_app --factory --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

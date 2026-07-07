@@ -7,3 +7,4 @@ scripts/smoke.py
 pets.toml
 .playwright-mcp/
 webui-*.png
+*.png
