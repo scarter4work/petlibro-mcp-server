@@ -4,6 +4,8 @@ from __future__ import annotations
 
 def allocate_portions(fractions, total: int) -> list[int]:
     """Distribute `total` integer portions across `fractions` (largest remainder)."""
+    if not fractions:
+        return []
     raw = [f * total for f in fractions]
     floors = [int(x) for x in raw]
     remainder = total - sum(floors)

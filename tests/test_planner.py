@@ -24,3 +24,9 @@ def test_plan_rows_drops_zero_portion_meals():
     split = [(0, 0.9), (720, 0.1)]  # 00:00 gets 2, 12:00 rounds to 0 at total=2
     rows = plan_rows(split, 2)
     assert rows == [("00:00", 2)]
+
+
+def test_allocate_and_plan_rows_handle_empty_split():
+    # A cat with no eating peaks yields an empty split; degrade to [], don't crash.
+    assert allocate_portions([], 12) == []
+    assert plan_rows([], 12) == []
