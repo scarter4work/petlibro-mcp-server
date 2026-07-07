@@ -250,13 +250,13 @@ Expected: FAIL — `AttributeError: 'PetLibroClient' object has no attribute 'wo
 In `src/petlibro_mcp/client.py`, add the import and two methods:
 
 ```python
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 ```
 
 ```python
     async def work_record(self, serial: str, days: int = 60, size: int = 1000) -> list:
         await self.ensure_login()
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         start = int((now - timedelta(days=days)).timestamp() * 1000)
         end = int(now.timestamp() * 1000)
         return await self._api.session.request("POST", "/device/workRecord/list", json={
