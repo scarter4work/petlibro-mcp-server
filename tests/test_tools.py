@@ -134,3 +134,51 @@ async def test_feed_rejects_nonpositive_cups(client):
     res = await tools.feed(cfg(), client, ["ferris"], -3)
     assert res[0]["ok"] is False
     client.feed.assert_not_awaited()
+
+
+def _work_record_days():
+    # 10 eating visits all clustered at 08:00 (device wall-clock)
+    recs = {"workRecords": []}
+    for _ in range(10):
+        recs["workRecords"].append({
+            "eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
+            "formatRecordTime": "2026-07-07 08:00",
+            "params": '{"seconds":"02m00s"}',
+        })
+    return [recs]
+
+
+def _client_for_analyze():
+    m = AsyncMock()
+    m.work_record = AsyncMock(return_value=_work_record_days())
+    m.feeding_plans = AsyncMock(return_value=[
+        {"executionTime": "08:00", "grainNum": 3, "enable": True},
+        {"executionTime": "20:00", "grainNum": 2, "enable": True},
+        {"executionTime": "23:00", "grainNum": 1, "enable": False},  # disabled: excluded
+    ])
+    return m
+
+
+async def test_analyze_rhythm_reports_current_and_recommended():
+    client = _client_for_analyze()
+    res = await tools.analyze_rhythm(cfg(), client, "ferris")
+    assert len(res) == 1
+    r = res[0]
+    assert r["ok"] is True and r["pet"] == "ferris"
+    assert r["eating_visits"] == 10
+    # current total = 3 + 2 (disabled row excluded) = 5
+    assert r["daily_total_portions"] == 5
+    assert sum(x["portions"] for x in r["recommended_schedule"]) == 5
+    assert {"time", "portions"} <= set(r["recommended_schedule"][0])
+
+
+async def test_analyze_rhythm_unknown_pet_reports_error():
+    res = await tools.analyze_rhythm(cfg(), _client_for_analyze(), "mittens")
+    assert res[0]["ok"] is False and "mittens" in res[0]["error"]
+
+
+async def test_analyze_rhythm_surfaces_fetch_failure():
+    client = _client_for_analyze()
+    client.work_record = AsyncMock(side_effect=RuntimeError("offline"))
+    res = await tools.analyze_rhythm(cfg(), client, "ferris")
+    assert res[0]["ok"] is False and "offline" in res[0]["error"]

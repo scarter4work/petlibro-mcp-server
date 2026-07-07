@@ -2,6 +2,9 @@
 from __future__ import annotations
 from .config import Config, cups_to_portions, UnknownPetError
 from .client import PetLibroClient
+from .history import parse_work_record
+from .rhythm import circadian_curve, find_peaks, split_at_peaks
+from .planner import plan_rows
 
 
 async def feed(config: Config, client: PetLibroClient, pets, cups: float,
@@ -119,6 +122,42 @@ async def fountain_status(config: Config, client: PetLibroClient,
         except Exception as exc:
             results.append({"fountain": f.name, "serial": f.serial,
                             "ok": False,
+                            "error": f"{type(exc).__name__}: {exc}"})
+    return results
+
+
+async def analyze_rhythm(config: Config, client: PetLibroClient,
+                         pet=None, days: int = 60) -> list[dict]:
+    try:
+        feeders = config.resolve_feeders("all" if pet is None else [pet])
+    except UnknownPetError as e:
+        return [{"pet": None, "serial": None, "ok": False, "error": str(e)}]
+
+    results = []
+    for f in feeders:
+        try:
+            raw = await client.work_record(f.serial, days=days)
+            eats, _dispenses = parse_work_record(raw)
+
+            plans = await client.feeding_plans(f.serial)
+            current = [(p.get("executionTime"), int(p.get("grainNum") or 0))
+                       for p in plans if p.get("enable", True)]
+            total = sum(g for _, g in current)
+
+            tod = [(minute, max(dur, 1)) for minute, dur in eats]
+            curve = circadian_curve(tod)
+            split = split_at_peaks(curve, find_peaks(curve))
+            recommended = plan_rows(split, total)
+
+            results.append({
+                "pet": f.name, "serial": f.serial, "ok": True,
+                "days": days, "eating_visits": len(eats),
+                "daily_total_portions": total,
+                "current_schedule": [{"time": t, "portions": g} for t, g in current],
+                "recommended_schedule": [{"time": t, "portions": g} for t, g in recommended],
+            })
+        except Exception as exc:  # surface, never swallow
+            results.append({"pet": f.name, "serial": f.serial, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
     return results
 
