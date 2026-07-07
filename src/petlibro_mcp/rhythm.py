@@ -53,3 +53,17 @@ def find_peaks(curve, max_meals: int = 6, min_separation_bins: int = 3) -> list[
         if len(chosen) >= max_meals:
             break
     return sorted(chosen)
+
+
+def split_at_peaks(curve, peaks) -> list[tuple[int, float]]:
+    """Fraction of the day's food per peak, by mass nearest each peak."""
+    if not peaks:
+        return []
+    bins = len(curve)
+    width = 1440 // bins
+    mass = {p: 0.0 for p in peaks}
+    for i in range(bins):
+        nearest = min(peaks, key=lambda p: _circ_dist(i, p, bins))
+        mass[nearest] += curve[i]
+    total = sum(mass.values()) or 1.0
+    return [(p * width, mass[p] / total) for p in sorted(peaks)]

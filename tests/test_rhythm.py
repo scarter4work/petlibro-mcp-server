@@ -50,3 +50,22 @@ def test_find_peaks_enforces_separation():
 
 def test_find_peaks_empty_curve():
     assert find_peaks([0.0] * 48) == []
+
+
+from petlibro_mcp.rhythm import split_at_peaks
+
+
+def test_split_assigns_mass_to_nearest_peak():
+    curve = [0.0] * 48
+    curve[8] = 6.0     # bin 8 -> 04:00
+    curve[40] = 2.0    # bin 40 -> 20:00
+    split = split_at_peaks(curve, [8, 40])
+    assert split[0][0] == 8 * 30   # 240 minutes = 04:00
+    assert split[1][0] == 40 * 30  # 1200 minutes = 20:00
+    assert round(split[0][1], 3) == 0.75
+    assert round(split[1][1], 3) == 0.25
+    assert round(sum(f for _, f in split), 6) == 1.0
+
+
+def test_split_empty_peaks():
+    assert split_at_peaks([1.0] * 48, []) == []
