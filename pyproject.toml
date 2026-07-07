@@ -17,8 +17,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
-web = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27", "httpx2>=2.0"]
+# httpx is TEST-only (Starlette TestClient); production serves via uvicorn.
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+web = ["fastapi>=0.110", "uvicorn>=0.29"]
 
 [project.scripts]
 petlibro-mcp = "petlibro_mcp.server:main"
@@ -30,3 +31,10 @@ packages = ["src/petlibro_mcp"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+# Treat DeprecationWarnings as errors (pristine), except Starlette's benign
+# test-client notice recommending httpx2 — we deliberately keep trusted httpx
+# for tests and do NOT add httpx2 as a dependency.
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

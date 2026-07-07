@@ -327,11 +327,28 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'webui.app'`
 
 - [ ] **Step 3: Add deps to pyproject.toml**
 
-Add to `[project.optional-dependencies]`:
+Add to `[project.optional-dependencies]` — `httpx` is TEST-only (Starlette
+TestClient); production serves via uvicorn, so `web` stays minimal. Do NOT add
+`httpx2` (Starlette's deprecation notice suggests it, but it's an unvetted
+package — keep trusted `httpx` for tests and filter the benign warning instead):
 
 ```toml
-web = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27"]
+web = ["fastapi>=0.110", "uvicorn>=0.29"]
 ```
+
+And add a pytest filter for Starlette's test-client deprecation notice so
+`pytest` stays pristine without installing httpx2:
+
+```toml
+[tool.pytest.ini_options]
+filterwarnings = [
+    "error::DeprecationWarning",
+    "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]
+```
+(Pristine check going forward: plain `.venv/bin/pytest -q` — the ini filters
+enforce error-on-DeprecationWarning except the one benign Starlette notice.)
 
 - [ ] **Step 4: Write the implementation**
 
