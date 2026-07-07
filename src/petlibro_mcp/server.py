@@ -64,6 +64,20 @@ TOOL_DEFS = [
         description="List configured feeders/fountains plus live cloud devices.",
         inputSchema={"type": "object", "properties": {}},
     ),
+    Tool(
+        name="analyze_rhythm",
+        description=("Recommend-only: compute each cat's natural eating rhythm "
+                     "from ~60d of history and report the current vs. a "
+                     "rhythm-timed schedule (same daily total). No writes. "
+                     "Omit 'pet' for all."),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pet": {"type": "string"},
+                "days": {"type": "integer", "default": 60},
+            },
+        },
+    ),
 ]
 
 
@@ -88,6 +102,9 @@ def build_server(config, client: PetLibroClient) -> Server:
             result = await T.fountain_status(config, client, a.get("name"))
         elif name == "list_devices":
             result = await T.list_devices(config, client)
+        elif name == "analyze_rhythm":
+            result = await T.analyze_rhythm(config, client, a.get("pet"),
+                                            a.get("days", 60))
         else:
             raise ValueError(f"Unknown tool: {name}")
         return [TextContent(type="text", text=json.dumps(result, indent=2))]

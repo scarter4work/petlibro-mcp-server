@@ -1,4 +1,4 @@
-"""Tests that the MCP server registers all five PetLibro tools."""
+"""Tests that the MCP server registers all PetLibro tools."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -14,7 +14,7 @@ def cfg():
                   max_cups_per_command=4, email="a@b.com", password="pw")
 
 
-async def test_lists_five_tools():
+async def test_lists_all_tools():
     server = build_server(cfg(), AsyncMock())
 
     # sanity: server built and has request handlers registered
@@ -30,7 +30,7 @@ async def test_lists_five_tools():
 
     names = {t.name for t in tools}
     assert names == {"feed", "open_lid", "feeder_status",
-                      "fountain_status", "list_devices"}
+                     "fountain_status", "list_devices", "analyze_rhythm"}
 
 
 def test_load_env_file_populates_environment(tmp_path, monkeypatch):
