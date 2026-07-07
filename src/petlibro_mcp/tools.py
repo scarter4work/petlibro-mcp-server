@@ -232,6 +232,45 @@ async def _apply_with_rollback(client, serial: str, actions: dict,
             "expected": want, "got": got, "snapshot": snapshot}
 
 
+async def _apply_one(client, serial: str, enabled: list[dict], total: int,
+                     target_rows, apply: bool) -> dict:
+    """Per-feeder apply core: total guard -> diff -> dry-run preview OR
+    apply+verify+rollback. Returns a result dict without pet/serial."""
+    target_total = sum(g for _, g in target_rows)
+    if target_total > total:
+        return {"ok": False,
+                "error": (f"Refusing: target total {target_total} exceeds "
+                          f"current {total} portions.")}
+    actions = diff_schedule(enabled, target_rows)
+    if not apply:
+        return {"ok": True, "dry_run": True,
+                "would_update": actions["updates"], "would_add": actions["adds"],
+                "would_remove": actions["removes"],
+                "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]}
+    snapshot = [dict(p) for p in enabled]
+    return await _apply_with_rollback(client, serial, actions, snapshot, target_rows)
+
+
+async def apply_target_rows(config: Config, client: PetLibroClient, pet,
+                            target_rows, apply: bool = False) -> list[dict]:
+    """Apply an explicit (e.g. user-edited) target schedule to a feeder."""
+    try:
+        feeders = config.resolve_feeders(pet)
+    except UnknownPetError as e:
+        return [{"pet": None, "serial": None, "ok": False, "error": str(e)}]
+    results = []
+    for f in feeders:
+        try:
+            enabled = [p for p in await client.feeding_plans(f.serial) if p.get("enable", True)]
+            total = sum(int(p.get("grainNum") or 0) for p in enabled)
+            res = await _apply_one(client, f.serial, enabled, total, list(target_rows), apply)
+            results.append({"pet": f.name, "serial": f.serial, **res})
+        except Exception as exc:  # surface, never swallow
+            results.append({"pet": f.name, "serial": f.serial, "ok": False,
+                            "error": f"{type(exc).__name__}: {exc}"})
+    return results
+
+
 async def apply_schedule(config: Config, client: PetLibroClient,
                          pet, days: int = 60, apply: bool = False) -> list[dict]:
     try:
@@ -242,23 +281,8 @@ async def apply_schedule(config: Config, client: PetLibroClient,
     for f in feeders:
         try:
             rc = await _compute_rhythm(client, f, days)
-            enabled, target_rows, total = rc["enabled"], rc["target_rows"], rc["total"]
-            target_total = sum(g for _, g in target_rows)
-            if target_total > total:
-                results.append({"pet": f.name, "serial": f.serial, "ok": False,
-                    "error": (f"Refusing: target total {target_total} exceeds "
-                              f"current {total} portions.")})
-                continue
-            actions = diff_schedule(enabled, target_rows)
-            if not apply:
-                results.append({
-                    "pet": f.name, "serial": f.serial, "ok": True, "dry_run": True,
-                    "would_update": actions["updates"], "would_add": actions["adds"],
-                    "would_remove": actions["removes"],
-                    "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]})
-                continue
-            snapshot = [dict(p) for p in enabled]
-            res = await _apply_with_rollback(client, f.serial, actions, snapshot, target_rows)
+            res = await _apply_one(client, f.serial, rc["enabled"], rc["total"],
+                                   rc["target_rows"], apply)
             results.append({"pet": f.name, "serial": f.serial, **res})
         except Exception as exc:  # pre-write failures (compute/diff) — device untouched
             results.append({"pet": f.name, "serial": f.serial, "ok": False,

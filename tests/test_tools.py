@@ -309,3 +309,34 @@ async def test_apply_rolls_back_when_write_raises():
     restored = sorted((p["executionTime"], p["grainNum"])
                       for p in await client.feeding_plans("x") if p.get("enable", True))
     assert restored == [("08:00", 3), ("20:00", 2)]
+
+
+async def test_apply_target_rows_dry_run_previews():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    res = await tools.apply_target_rows(cfg(), client, "ferris", [("09:00", 4)])  # apply defaults False
+    r = res[0]
+    assert r["ok"] is True and r["dry_run"] is True
+    assert r["target_schedule"] == [{"time": "09:00", "portions": 4}]
+    # total 4 <= current 5 -> allowed; nothing written
+    assert {(p["executionTime"], p["grainNum"]) for p in await client.feeding_plans("x")} == {("08:00", 3), ("20:00", 2)}
+
+
+async def test_apply_target_rows_applies_and_verifies():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    res = await tools.apply_target_rows(cfg(), client, "ferris", [("09:00", 4)], apply=True)
+    r = res[0]
+    assert r["ok"] is True and r.get("applied") is True
+    got = sorted((p["executionTime"], p["grainNum"]) for p in await client.feeding_plans("x") if p.get("enable", True))
+    assert got == [("09:00", 4)]
+
+
+async def test_apply_target_rows_total_guard():
+    client = _FakePlanClient([_plan(1, "08:00", 5)], _work_record_days())
+    res = await tools.apply_target_rows(cfg(), client, "ferris", [("08:00", 9)], apply=True)
+    assert res[0]["ok"] is False and "Refusing" in res[0]["error"]
+
+
+async def test_apply_target_rows_unknown_pet():
+    client = _FakePlanClient([], _work_record_days())
+    res = await tools.apply_target_rows(cfg(), client, "mittens", [("08:00", 1)])
+    assert res[0]["ok"] is False and "mittens" in res[0]["error"]
