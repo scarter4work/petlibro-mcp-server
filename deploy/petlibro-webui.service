@@ -5,12 +5,22 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Runs as a dedicated, unprivileged system user (created by deploy.sh) — NOT root.
+User=petlibro
+Group=petlibro
 WorkingDirectory=/opt/petlibro-webui
 Environment=PETLIBRO_PETS_TOML=/opt/petlibro-webui/pets.toml
 Environment=PETLIBRO_ENV=/opt/petlibro-webui/.env
 ExecStart=/opt/petlibro-webui/.venv/bin/uvicorn webui.app:create_app --factory --host 0.0.0.0 --port 8080
 Restart=on-failure
 RestartSec=3
+
+# Hardening: the service only reads its own dir + reaches the PetLibro cloud.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/petlibro-webui
 
 [Install]
 WantedBy=multi-user.target

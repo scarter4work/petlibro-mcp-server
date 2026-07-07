@@ -26,10 +26,14 @@ if ! python3 -m venv .venv 2>/dev/null; then
 fi
 ./.venv/bin/pip install -q --upgrade pip
 ./.venv/bin/pip install -q -e '.[web]'
+# dedicated unprivileged service user (not root)
+id petlibro &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin petlibro
+chown -R petlibro:petlibro /opt/petlibro-webui
 chmod 600 .env
 install -m 644 deploy/petlibro-webui.service /etc/systemd/system/petlibro-webui.service
 systemctl daemon-reload
-systemctl enable --now petlibro-webui
+systemctl enable petlibro-webui
+systemctl restart petlibro-webui   # restart (not just enable --now) so unit changes apply
 sleep 2
 systemctl is-active petlibro-webui
 echo "--- /api/pets ---"
