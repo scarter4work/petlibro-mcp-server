@@ -486,22 +486,33 @@ git commit -m "refactor: extract _compute_rhythm shared by analyze/apply"
 # tests/test_tools.py  (append)
 
 class _FakePlanClient:
-    """Stateful fake: holds a plan list, mutates it via the write methods."""
-    def __init__(self, plans, work, drop_writes=False):
+    """Stateful fake: holds a plan list, mutates it via the write methods.
+
+    Flags simulate failure modes:
+    - drop_writes: cloud silently ignores writes (no-op).
+    - corrupt: update_plan writes a WRONG grainNum (genuine mutation, verify fails).
+    - raise_on_update: update_plan raises mid-sequence (write throws).
+    """
+    def __init__(self, plans, work, drop_writes=False, corrupt=False, raise_on_update=False):
         self._plans = [dict(p) for p in plans]
         self._work = work
         self._next_id = max([p["id"] for p in self._plans], default=0) + 1
-        self.drop_writes = drop_writes  # simulate a cloud that silently ignores writes
+        self.drop_writes = drop_writes
+        self.corrupt = corrupt
+        self.raise_on_update = raise_on_update
     async def work_record(self, serial, days=60):
         return self._work
     async def feeding_plans(self, serial):
         return [dict(p) for p in self._plans]
     async def update_plan(self, serial, plan):
+        if self.raise_on_update:
+            raise RuntimeError("update failed")
         if self.drop_writes:
             return
+        grain = plan["grainNum"] + 100 if self.corrupt else plan["grainNum"]
         for p in self._plans:
             if p["id"] == plan["id"]:
-                p.update({"executionTime": plan["executionTime"], "grainNum": plan["grainNum"]})
+                p.update({"executionTime": plan["executionTime"], "grainNum": grain})
     async def add_plan(self, serial, plan):
         if self.drop_writes:
             return
@@ -550,6 +561,32 @@ async def test_apply_rolls_back_when_verify_fails():
     assert "erify" in r["error"]  # "Verify failed..."
 
 
+async def test_apply_rollback_restores_genuinely_mutated_state():
+    # corrupt: writes really happen but with wrong grain -> verify fails ->
+    # rollback must UNDO the genuine mutation back to the original schedule.
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), corrupt=True)
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is False and "erify" in r["error"] and "rolled back" in r["error"]
+    restored = sorted((p["executionTime"], p["grainNum"])
+                      for p in await client.feeding_plans("x") if p.get("enable", True))
+    assert restored == [("08:00", 3), ("20:00", 2)]
+
+
+async def test_apply_rolls_back_when_write_raises():
+    # raise_on_update: a write throws mid-sequence (after a remove already applied)
+    # -> must still roll back and surface the failure, not leave a partial state.
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), raise_on_update=True)
+    res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
+    r = res[0]
+    assert r["ok"] is False and "mid-apply" in r["error"]
+    restored = sorted((p["executionTime"], p["grainNum"])
+                      for p in await client.feeding_plans("x") if p.get("enable", True))
+    assert restored == [("08:00", 3), ("20:00", 2)]
+
+
 async def test_apply_refuses_when_target_exceeds_current(monkeypatch):
     client = _FakePlanClient([_plan(1, "08:00", 5)], _work_record_days())
     monkeypatch.setattr(tools, "plan_rows", lambda split, total: [("08:00", total + 5)])
@@ -594,8 +631,9 @@ def _enabled_pairs(plans) -> list[tuple[str, int]]:
 
 
 async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
-    """Restore `snapshot` by removing current enabled rows and re-adding the snapshot.
-    Returns True if the readback matches the snapshot."""
+    """Restore `snapshot` by wiping current enabled rows and re-adding the snapshot.
+    Returns True iff the readback matches the snapshot. May raise if a call fails —
+    the caller treats a raised exception as a failed rollback."""
     current = [p for p in await client.feeding_plans(serial) if p.get("enable", True)]
     for p in current:
         await client.remove_plan(serial, p["id"])
@@ -606,10 +644,48 @@ async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
     return got == want
 
 
+async def _apply_with_rollback(client, serial: str, actions: dict,
+                               snapshot: list[dict], target_rows) -> dict:
+    """Apply the diff and verify; on ANY failure — a write exception OR a verify
+    mismatch — attempt rollback to `snapshot`. Always surface the snapshot for
+    manual restore if rollback cannot be confirmed. Never leaves a silently
+    half-applied schedule."""
+    want = sorted((t, g) for t, g in target_rows)
+    apply_error = None
+    got = None
+    try:
+        await _apply_actions(client, serial, actions)
+        got = _enabled_pairs(await client.feeding_plans(serial))
+    except Exception as exc:
+        apply_error = f"{type(exc).__name__}: {exc}"
+    else:
+        if got == want:
+            return {"ok": True, "applied": True,
+                    "schedule": [{"time": t, "portions": g} for t, g in want]}
+
+    # Failure: a write raised, or the readback didn't match the target. Roll back.
+    try:
+        rolled = await _rollback(client, serial, snapshot)
+        rollback_error = None
+    except Exception as exc:
+        rolled = False
+        rollback_error = f"{type(exc).__name__}: {exc}"
+
+    base = (f"Write failed mid-apply ({apply_error})" if apply_error
+            else f"Verify failed after apply (expected {want}, got {got})")
+    if rolled:
+        return {"ok": False, "error": f"{base}; rolled back to snapshot.",
+                "expected": want, "got": got}
+    tail = (f" rollback also raised ({rollback_error})" if rollback_error
+            else " rollback did not restore snapshot")
+    return {"ok": False, "error": f"{base};{tail} — restore manually from snapshot.",
+            "expected": want, "got": got, "snapshot": snapshot}
+
+
 async def apply_schedule(config: Config, client: PetLibroClient,
                          pet, days: int = 60, apply: bool = False) -> list[dict]:
     try:
-        feeders = config.resolve_feeders([pet] if isinstance(pet, str) else pet)
+        feeders = config.resolve_feeders(pet)
     except UnknownPetError as e:
         return [{"pet": None, "serial": None, "ok": False, "error": str(e)}]
 
@@ -634,23 +710,12 @@ async def apply_schedule(config: Config, client: PetLibroClient,
                     "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]})
                 continue
 
+            # From here on the device may be mutated; _apply_with_rollback owns the
+            # snapshot/verify/rollback guarantee, so writes are NOT under this except.
             snapshot = [dict(p) for p in enabled]
-            await _apply_actions(client, f.serial, actions)
-            got = _enabled_pairs(await client.feeding_plans(f.serial))
-            want = sorted((t, g) for t, g in target_rows)
-            if got == want:
-                results.append({"pet": f.name, "serial": f.serial, "ok": True,
-                    "applied": True,
-                    "schedule": [{"time": t, "portions": g} for t, g in want]})
-            else:
-                rolled = await _rollback(client, f.serial, snapshot)
-                results.append({"pet": f.name, "serial": f.serial, "ok": False,
-                    "error": ("Verify failed after apply; rolled back to snapshot."
-                              if rolled else
-                              "Verify failed AND rollback failed — restore manually from snapshot."),
-                    "expected": want, "got": got,
-                    "snapshot": None if rolled else snapshot})
-        except Exception as exc:  # surface, never swallow
+            res = await _apply_with_rollback(client, f.serial, actions, snapshot, target_rows)
+            results.append({"pet": f.name, "serial": f.serial, **res})
+        except Exception as exc:  # pre-write failures (compute/diff) — device untouched
             results.append({"pet": f.name, "serial": f.serial, "ok": False,
                             "error": f"{type(exc).__name__}: {exc}"})
     return results
