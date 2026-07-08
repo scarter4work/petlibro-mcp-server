@@ -57,6 +57,24 @@ async def open_lid(config: Config, client: PetLibroClient, pets) -> list[dict]:
     return results
 
 
+def _food_low(info: dict) -> bool | None:
+    """True when the hopper is running low.
+
+    Prefer the explicit hopper enum ``warehouseSurplusGrain`` ("GOOD" = plenty;
+    any other value = running out). Fall back to negating the top-level
+    ``surplusGrain`` boolean if the enum is absent. Returns None if neither
+    field is present, rather than guessing. NOTE: this used to map straight to
+    ``surplusGrain`` (inverted — reported food_low=True when food was present).
+    """
+    warehouse = info.get("warehouseSurplusGrain")
+    if warehouse is not None:
+        return warehouse != "GOOD"
+    surplus = info.get("surplusGrain")
+    if surplus is not None:
+        return not surplus
+    return None
+
+
 async def feeder_status(config: Config, client: PetLibroClient,
                         pet=None) -> list[dict]:
     try:
@@ -70,7 +88,7 @@ async def feeder_status(config: Config, client: PetLibroClient,
             results.append({
                 "pet": f.name, "serial": f.serial,
                 "online": info.get("online"),
-                "food_low": info.get("surplusGrain"),
+                "food_low": _food_low(info),
                 "battery": info.get("batteryState"),
                 "today_feeding_quantity": info.get("todayFeedingQuantity"),
                 "raw": info,

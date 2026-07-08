@@ -74,6 +74,22 @@ async def test_feeder_status_single(client):
     res = await tools.feeder_status(cfg(), client, "ferris")
     assert res[0]["pet"] == "ferris"
     assert res[0]["online"] is True
+    # surplusGrain=True (fallback path) => hopper NOT low
+    assert res[0]["food_low"] is False
+
+
+async def test_food_low_uses_hopper_enum_when_present(client):
+    client.real_info = AsyncMock(return_value={
+        "online": True, "warehouseSurplusGrain": "GOOD", "surplusGrain": True})
+    assert (await tools.feeder_status(cfg(), client, "ferris"))[0]["food_low"] is False
+    client.real_info = AsyncMock(return_value={
+        "online": True, "warehouseSurplusGrain": "SHORTAGE", "surplusGrain": True})
+    assert (await tools.feeder_status(cfg(), client, "ferris"))[0]["food_low"] is True
+
+
+async def test_food_low_none_when_no_signal(client):
+    client.real_info = AsyncMock(return_value={"online": True})
+    assert (await tools.feeder_status(cfg(), client, "ferris"))[0]["food_low"] is None
 
 
 async def test_feeder_status_reports_failure(client):
