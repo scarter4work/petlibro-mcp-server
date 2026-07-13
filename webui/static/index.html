@@ -165,6 +165,10 @@
     border:1px solid var(--line); border-radius:7px; padding:4px 2px; background:var(--surface); color:var(--ink);
   }
 
+  .feed-now{display:flex; align-items:center; gap:10px; margin-left:auto;}
+  .feed-now-label{font-size:12px; color:var(--ink-faint); letter-spacing:.02em;}
+  .feed-result{margin-bottom:18px;}
+
   .total-row{
     display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;
     margin-top:18px; padding-top:16px; border-top:1px dashed var(--line);
@@ -280,7 +284,11 @@
     edited: [],
     requestToken: 0,
     confirmingSave: false,
-    resultPanel: null
+    resultPanel: null,
+    feedPortions: 1,
+    confirmingFeed: false,
+    feeding: false,
+    feedResult: null
   };
 
   function esc(s){
@@ -303,6 +311,13 @@
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({schedule: schedule, apply: applyFlag})
+      }).then(function(r){ return r.json(); });
+    },
+    feed: function(name, portions){
+      return fetch("/api/pets/" + encodeURIComponent(name) + "/feed", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({portions: portions})
       }).then(function(r){ return r.json(); });
     }
   };
@@ -534,6 +549,116 @@
   }
 
   // ---------- Main render ----------
+  // ---------- Feed now ----------
+  // The cap comes from the server (max_cups_per_command x portions_per_cup) so the
+  // spinner bound and the confirm threshold can't drift from the guard tools.feed
+  // actually enforces. The browser bound is convenience; the server is the guarantee.
+  function feedCap(){
+    for (var i = 0; i < state.pets.length; i++){
+      if (state.pets[i].name === state.selected) return Number(state.pets[i].max_portions) || 4;
+    }
+    return 4;
+  }
+
+  function renderFeedNow(){
+    var cap = feedCap();
+    var n = state.feedPortions;
+    if (state.confirmingFeed){
+      return '<div class="feed-now">' +
+        '<span class="feed-now-label">Feed ' + esc(n) + ' portion' + (n === 1 ? "" : "s") +
+          ' to ' + esc(state.selected) + '?</span>' +
+        '<button class="btn btn-danger-confirm" id="btn-feed-yes" type="button">Feed</button>' +
+        '<button class="btn-text" id="btn-feed-no" type="button">Cancel</button>' +
+      '</div>';
+    }
+    return '<div class="feed-now">' +
+      '<span class="feed-now-label">Feed now</span>' +
+      '<div class="stepper" id="feed-stepper">' +
+        '<button class="stepper-btn" type="button" data-action="dec" aria-label="Decrease feed portions">&minus;</button>' +
+        '<input class="stepper-input" id="feed-input" type="number" min="1" max="' + esc(cap) + '" step="1" ' +
+          'value="' + esc(n) + '" inputmode="numeric" aria-label="Portions to feed now">' +
+        '<button class="stepper-btn" type="button" data-action="inc" aria-label="Increase feed portions">&plus;</button>' +
+      '</div>' +
+      '<button class="btn btn-primary" id="btn-feed" type="button"' + (state.feeding ? " disabled" : "") + '>' +
+        (state.feeding ? "Feeding&hellip;" : "Feed now") +
+      '</button>' +
+    '</div>';
+  }
+
+  function renderFeedResult(){
+    if (!state.feedResult) return "";
+    var r = state.feedResult;
+    var cls = r.ok ? "banner-success" : "banner-error";
+    var icon = r.ok ? "&#10003;" : "&#9888;";
+    return '<div class="banner ' + cls + ' feed-result"' + (r.ok ? "" : ' role="alert"') + '>' +
+      '<span class="banner-icon">' + icon + '</span><span>' + esc(r.message) + '</span></div>';
+  }
+
+  function setFeedPortions(n){
+    var cap = feedCap();
+    state.feedPortions = Math.min(cap, Math.max(1, Math.round(Number(n) || 1)));
+  }
+
+  function attachFeedHandlers(){
+    var stepper = document.getElementById("feed-stepper");
+    if (stepper){
+      stepper.addEventListener("click", function(ev){
+        var btn = ev.target.closest(".stepper-btn");
+        if (!btn) return;
+        setFeedPortions(state.feedPortions + (btn.getAttribute("data-action") === "inc" ? 1 : -1));
+        document.getElementById("feed-input").value = state.feedPortions;
+      });
+      stepper.addEventListener("change", function(ev){
+        if (!ev.target.closest(".stepper-input")) return;
+        setFeedPortions(ev.target.value);
+        ev.target.value = state.feedPortions;
+      });
+    }
+    var feedBtn = document.getElementById("btn-feed");
+    if (feedBtn) feedBtn.addEventListener("click", function(){
+      // At the cap, make them say it twice. Below it, one click feeds.
+      if (state.feedPortions >= feedCap()){
+        state.confirmingFeed = true;
+        renderMain();
+      } else {
+        doFeed();
+      }
+    });
+    var yes = document.getElementById("btn-feed-yes");
+    if (yes) yes.addEventListener("click", function(){ doFeed(); });
+    var no = document.getElementById("btn-feed-no");
+    if (no) no.addEventListener("click", function(){
+      state.confirmingFeed = false;
+      renderMain();
+    });
+  }
+
+  function doFeed(){
+    var name = state.selected;
+    var portions = state.feedPortions;
+    state.confirmingFeed = false;
+    state.feeding = true;
+    state.feedResult = null;
+    renderMain();
+    API.feed(name, portions).then(function(res){
+      if (state.selected !== name) return;  // switched pets mid-flight
+      state.feeding = false;
+      if (res.ok === false){
+        state.feedResult = {ok: false, message: res.error || "Feed failed."};
+      } else {
+        state.feedResult = {ok: true,
+          message: "Fed " + portions + " portion" + (portions === 1 ? "" : "s") + " to " + name + "."};
+        state.feedPortions = 1;  // don't let the next click repeat a big amount
+      }
+      renderMain();
+    }).catch(function(err){
+      if (state.selected !== name) return;
+      state.feeding = false;
+      state.feedResult = {ok: false, message: "Network error while feeding: " + err};
+      renderMain();
+    });
+  }
+
   function renderPetView(){
     var a = state.analysis;
     if (!a){
@@ -583,7 +708,9 @@
       '<div class="pet-header">' +
         '<h1>' + esc(a.pet) + '</h1>' +
         '<span class="serial-badge">' + esc(a.serial) + '</span>' +
+        renderFeedNow() +
       '</div>' +
+      renderFeedResult() +
       '<div class="card">' +
         '<h2>When ' + esc(a.pet) + ' actually eats</h2>' +
         '<p class="card-caption">Feeder visits over the last ' + esc(a.days || 60) + ' days, in 30-minute bins.</p>' +
@@ -610,6 +737,8 @@
       attachStepperHandlers(proposedCol);
       refreshTotals();
     }
+
+    attachFeedHandlers();
 
     document.getElementById("btn-reanalyze").addEventListener("click", function(){ reanalyze(); });
     var previewBtn = document.getElementById("btn-preview");
@@ -657,6 +786,10 @@
     state.edited = [];
     state.confirmingSave = false;
     state.resultPanel = null;
+    state.feedPortions = 1;
+    state.confirmingFeed = false;
+    state.feeding = false;
+    state.feedResult = null;
     clearError();
     renderSidebar();
     renderMain();

@@ -23,7 +23,40 @@ def test_pets_endpoint():
     c = TestClient(build_app(_cfg(), _client()))
     r = c.get("/api/pets")
     assert r.status_code == 200
-    assert r.json() == [{"name": "ferris", "serial": "SN-F"}]
+    assert r.json() == [{"name": "ferris", "serial": "SN-F", "max_portions": 48}]
+
+
+def test_pets_endpoint_exposes_feed_cap():
+    """max_portions lets the UI bound its spinner by the same guard the server enforces."""
+    c = TestClient(build_app(_cfg(), _client()))
+    assert c.get("/api/pets").json()[0]["max_portions"] == 48
+
+
+def test_feed_endpoint():
+    client = _client()
+    c = TestClient(build_app(_cfg(), client))
+    r = c.post("/api/pets/ferris/feed", json={"portions": 6})
+    assert r.status_code == 200
+    assert r.json()["ok"] is True and r.json()["portions"] == 6
+    client.feed.assert_awaited_once_with("SN-F", 6)
+
+
+def test_feed_endpoint_refuses_over_cap():
+    client = _client()
+    c = TestClient(build_app(_cfg(), client))
+    r = c.post("/api/pets/ferris/feed", json={"portions": 400})
+    assert r.status_code == 200 and r.json()["ok"] is False
+    client.feed.assert_not_awaited()
+
+
+def test_feed_endpoint_ignores_client_supplied_force():
+    """The cap is the only thing standing between a stray request and a whole hopper.
+    The web endpoint must not let the caller switch it off."""
+    client = _client()
+    c = TestClient(build_app(_cfg(), client))
+    r = c.post("/api/pets/ferris/feed", json={"portions": 400, "force": True})
+    assert r.status_code == 200 and r.json()["ok"] is False
+    client.feed.assert_not_awaited()
 
 
 def test_analysis_endpoint():

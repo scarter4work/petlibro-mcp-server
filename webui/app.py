@@ -18,7 +18,16 @@ def build_app(config, client) -> FastAPI:
 
     @app.get("/api/pets")
     async def pets():
-        return [{"name": f.name, "serial": f.serial} for f in config.feeders]
+        return [{"name": f.name, "serial": f.serial,
+                 "max_portions": rhythm_api.max_portions(config, f)}
+                for f in config.feeders]
+
+    @app.post("/api/pets/{name}/feed")
+    async def feed(name: str, body: dict):
+        # No force from the wire: the cap is the only guard between a stray request
+        # and an emptied hopper, so the web path must never be able to switch it off.
+        return await rhythm_api.feed(config, client, name,
+                                     int(body.get("portions", 0)))
 
     @app.get("/api/pets/{name}/analysis")
     async def analysis(name: str, days: int = 60):
