@@ -202,6 +202,10 @@ def _enabled_pairs(plans) -> list[tuple[str, int]]:
                   for p in plans if p.get("enable", True))
 
 
+def _as_schedule(pairs) -> list[dict]:
+    return [{"time": t, "portions": g} for t, g in pairs]
+
+
 async def _rollback(client, serial: str, snapshot: list[dict]) -> bool:
     """Restore `snapshot` by wiping current enabled rows and re-adding the snapshot.
     Returns True iff the readback matches the snapshot. May raise if a call fails —
@@ -232,7 +236,8 @@ async def _apply_with_rollback(client, serial: str, actions: dict,
     else:
         if got == want:
             return {"ok": True, "applied": True,
-                    "schedule": [{"time": t, "portions": g} for t, g in want]}
+                    "schedule": _as_schedule(want),
+                    "current_schedule": _as_schedule(want)}
     try:
         rolled = await _rollback(client, serial, snapshot)
         rollback_error = None
@@ -242,8 +247,11 @@ async def _apply_with_rollback(client, serial: str, actions: dict,
     base = (f"Write failed mid-apply ({apply_error})" if apply_error
             else f"Verify failed after apply (expected {want}, got {got})")
     if rolled:
+        # Rollback confirmed: the device holds the snapshot again, so that — not the
+        # schedule we failed to write — is what the caller should be showing.
         return {"ok": False, "error": f"{base}; rolled back to snapshot.",
-                "expected": want, "got": got}
+                "expected": want, "got": got,
+                "current_schedule": _as_schedule(_enabled_pairs(snapshot))}
     tail = (f" rollback also raised ({rollback_error})" if rollback_error
             else " rollback did not restore snapshot")
     return {"ok": False, "error": f"{base};{tail} — restore manually from snapshot.",
@@ -254,16 +262,21 @@ async def _apply_one(client, serial: str, enabled: list[dict], total: int,
                      target_rows, apply: bool) -> dict:
     """Per-feeder apply core: total guard -> diff -> dry-run preview OR
     apply+verify+rollback. Returns a result dict without pet/serial."""
+    # `enabled` was read from the device moments ago, so this is what it really holds —
+    # the caller's own view of the schedule may be older than that.
+    current_schedule = _as_schedule(_enabled_pairs(enabled))
     target_total = sum(g for _, g in target_rows)
     if target_total > total:
         return {"ok": False,
                 "error": (f"Refusing: target total {target_total} exceeds "
-                          f"current {total} portions.")}
+                          f"current {total} portions."),
+                "current_schedule": current_schedule}
     actions = diff_schedule(enabled, target_rows)
     if not apply:
         return {"ok": True, "dry_run": True,
                 "would_update": actions["updates"], "would_add": actions["adds"],
                 "would_remove": actions["removes"],
+                "current_schedule": current_schedule,
                 "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]}
     snapshot = [dict(p) for p in enabled]
     return await _apply_with_rollback(client, serial, actions, snapshot, target_rows)

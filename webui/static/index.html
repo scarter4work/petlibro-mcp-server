@@ -510,7 +510,16 @@
     return "<ul>" + items.map(function(x){ return "<li>" + formatter(x) + "</li>"; }).join("") + "</ul>";
   }
 
+  // Every preview/apply re-reads the feeder, so its response is a fresher view of the
+  // schedule than whatever we painted at analysis time. Trust it over what's on screen:
+  // the device may have been changed from the phone app or another browser since.
+  function syncCurrentSchedule(res){
+    if (!res || !res.current_schedule || !state.analysis) return;
+    state.analysis.current_schedule = res.current_schedule;
+  }
+
   function renderPreviewResult(res){
+    syncCurrentSchedule(res);
     if (res.ok === false){
       state.resultPanel = '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span><span>' +
         esc(res.error || "Preview failed.") + "</span></div>";
@@ -537,6 +546,7 @@
   }
 
   function renderApplyResult(res){
+    syncCurrentSchedule(res);
     if (res.ok === true && res.applied){
       state.resultPanel = '<div class="banner banner-success"><span class="banner-icon">✓</span>' +
         '<span><strong>Saved.</strong> The new schedule is live on the feeder.</span></div>';

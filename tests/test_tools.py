@@ -223,31 +223,52 @@ async def test_compute_rhythm_returns_enabled_and_target():
 
 
 class _FakePlanClient:
-    """Stateful fake: holds a plan list, mutates it via the write methods."""
-    def __init__(self, plans, work, drop_writes=False, corrupt=False, raise_on_update=False):
+    """Stateful fake: holds a plan list, mutates it via the write methods.
+
+    Fault injection is write-generic on purpose. Which primitive a given diff uses is
+    an implementation detail — a schedule whose times all move is now expressed as
+    removes+adds with zero updates — so hooks bound only to update_plan would silently
+    stop firing and leave the rollback tests asserting nothing.
+    """
+    def __init__(self, plans, work, drop_writes=False, corrupt=0, raise_on_write=0):
         self._plans = [dict(p) for p in plans]
         self._work = work
         self._next_id = max([p["id"] for p in self._plans], default=0) + 1
         self.drop_writes = drop_writes  # simulate a cloud that silently ignores writes
+        # Countdowns, not flags: the fault must hit the apply and then stop, because
+        # _rollback re-adds rows through these same methods and has to be able to win.
         self.corrupt = corrupt
-        self.raise_on_update = raise_on_update
+        self.raise_on_write = raise_on_write
+
+    def _maybe_raise(self, what):
+        if self.raise_on_write > 0:
+            self.raise_on_write -= 1
+            raise RuntimeError(f"{what} failed")
+
+    def _grain(self, plan):
+        if self.corrupt > 0:
+            self.corrupt -= 1
+            return plan["grainNum"] + 100
+        return plan["grainNum"]
+
     async def work_record(self, serial, days=60):
         return self._work
     async def feeding_plans(self, serial):
         return [dict(p) for p in self._plans]
     async def update_plan(self, serial, plan):
-        if self.raise_on_update:
-            raise RuntimeError("update failed")
+        self._maybe_raise("update")
         if self.drop_writes:
             return
-        grain = plan["grainNum"] + 100 if self.corrupt else plan["grainNum"]
+        grain = self._grain(plan)
         for p in self._plans:
             if p["id"] == plan["id"]:
                 p.update({"executionTime": plan["executionTime"], "grainNum": grain})
     async def add_plan(self, serial, plan):
+        self._maybe_raise("add")
         if self.drop_writes:
             return
-        self._plans.append({"id": self._next_id, "enable": True, **plan})
+        grain = self._grain(plan)
+        self._plans.append({"id": self._next_id, "enable": True, **plan, "grainNum": grain})
         self._next_id += 1
     async def remove_plan(self, serial, plan_id):
         if self.drop_writes:
@@ -282,6 +303,34 @@ async def test_apply_writes_verifies_and_reports_applied():
     assert sum(g for _, g in got) == 5
 
 
+async def test_preview_returns_the_devices_actual_current_schedule():
+    """The UI's "Now, on the feeder" column can go stale (phone app, another session).
+    Every preview re-reads the device, so hand that fresh state back to the caller."""
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    r = (await tools.apply_schedule(cfg(), client, "ferris"))[0]
+    assert r["dry_run"] is True
+    assert r["current_schedule"] == [{"time": "08:00", "portions": 3},
+                                     {"time": "20:00", "portions": 2}]
+
+
+async def test_applied_result_reports_the_new_current_schedule():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)], _work_record_days())
+    r = (await tools.apply_schedule(cfg(), client, "ferris", apply=True))[0]
+    assert r["applied"] is True
+    assert r["current_schedule"] == r["schedule"]  # what the device now holds
+
+
+async def test_rolled_back_result_reports_the_restored_schedule():
+    client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
+                             _work_record_days(), raise_on_write=1)
+    r = (await tools.apply_schedule(cfg(), client, "ferris", apply=True))[0]
+    assert r["ok"] is False and "rolled back" in r["error"]
+    # the snapshot is what the device actually holds again — don't leave the UI
+    # showing the schedule we failed to write
+    assert r["current_schedule"] == [{"time": "08:00", "portions": 3},
+                                     {"time": "20:00", "portions": 2}]
+
+
 async def test_apply_rolls_back_when_verify_fails():
     # drop_writes: writes are silently ignored -> readback won't match -> rollback path
     client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
@@ -307,7 +356,7 @@ async def test_apply_unknown_pet_errors():
 
 async def test_apply_rollback_restores_genuinely_mutated_state():
     client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
-                             _work_record_days(), corrupt=True)
+                             _work_record_days(), corrupt=1)
     res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
     r = res[0]
     assert r["ok"] is False and "erify" in r["error"] and "rolled back" in r["error"]
@@ -318,7 +367,7 @@ async def test_apply_rollback_restores_genuinely_mutated_state():
 
 async def test_apply_rolls_back_when_write_raises():
     client = _FakePlanClient([_plan(1, "08:00", 3), _plan(2, "20:00", 2)],
-                             _work_record_days(), raise_on_update=True)
+                             _work_record_days(), raise_on_write=1)
     res = await tools.apply_schedule(cfg(), client, "ferris", apply=True)
     r = res[0]
     assert r["ok"] is False and "mid-apply" in r["error"]
