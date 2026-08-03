@@ -9,3 +9,5 @@ pets.toml
 webui-*.png
 deployed-*.png
 .petlibro-journal.jsonl
+tests/e2e/node_modules/
+tests/e2e/package-lock.json
