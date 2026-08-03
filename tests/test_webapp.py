@@ -1,7 +1,16 @@
+import pytest
 from unittest.mock import AsyncMock
 from fastapi.testclient import TestClient
 from petlibro_mcp.config import Config, Feeder
 from webui.app import build_app
+
+
+@pytest.fixture(autouse=True)
+def _isolate_journal(tmp_path, monkeypatch):
+    """Keep the applied-schedule journal out of the repo (see test_tools.py)."""
+    monkeypatch.setenv("PETLIBRO_JOURNAL", str(tmp_path / "journal.jsonl"))
+
+
 
 
 def _cfg():
@@ -79,3 +88,10 @@ def test_index_served():
     c = TestClient(build_app(_cfg(), _client()))
     r = c.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+
+
+def test_analysis_endpoint_includes_trim_and_evidence():
+    c = TestClient(build_app(_cfg(), _client()))
+    body = c.get("/api/pets/ferris/analysis").json()
+    assert body["ok"] is True
+    assert "trim" in body and "evidence" in body

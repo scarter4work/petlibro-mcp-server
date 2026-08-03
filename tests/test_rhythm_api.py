@@ -1,6 +1,15 @@
+import pytest
 from unittest.mock import AsyncMock
 from petlibro_mcp.config import Config, Feeder
 from webui import rhythm_api
+
+
+@pytest.fixture(autouse=True)
+def _isolate_journal(tmp_path, monkeypatch):
+    """Keep the applied-schedule journal out of the repo (see test_tools.py)."""
+    monkeypatch.setenv("PETLIBRO_JOURNAL", str(tmp_path / "journal.jsonl"))
+
+
 
 
 def _cfg():
@@ -71,3 +80,18 @@ async def test_apply_delegates_to_target_rows():
                                  [{"time": "09:00", "portions": 4}], apply_flag=False)
     assert out["ok"] is True and out["dry_run"] is True
     assert out["target_schedule"] == [{"time": "09:00", "portions": 4}]
+
+
+async def test_analysis_passes_trim_and_evidence_through():
+    out = await rhythm_api.analysis(_cfg(), _client(), "ferris")
+    assert "trim" in out and "evidence" in out
+    assert set(out["trim"]) == {"applied", "jam_rate", "blocks_by_time",
+                                "withheld_reason"}
+    assert "verdict" in out["evidence"]
+
+
+async def test_analysis_on_a_feeder_with_no_known_change_withholds_trim():
+    """The fixture's plans carry no updateTime, so there is no window to judge."""
+    out = await rhythm_api.analysis(_cfg(), _client(), "ferris")
+    assert out["trim"]["applied"] == 0
+    assert out["trim"]["withheld_reason"] == "no_known_change"
