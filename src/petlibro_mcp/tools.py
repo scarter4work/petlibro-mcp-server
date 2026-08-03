@@ -373,9 +373,15 @@ async def _apply_one(client, serial: str, enabled: list[dict], total: int,
                 "current_schedule": current_schedule}
     actions = diff_schedule(enabled, target_rows)
     if not apply:
+        # `would_remove` stays a list of plan ids because that is what the write path
+        # needs. A preview reading "row id 5534603 removed" tells a human nothing, and
+        # the id->time map exists only here, so resolve it for display alongside.
+        by_id = {p.get("id"): p.get("executionTime") for p in enabled}
         return {"ok": True, "dry_run": True,
                 "would_update": actions["updates"], "would_add": actions["adds"],
                 "would_remove": actions["removes"],
+                "would_remove_times": [{"id": pid, "time": by_id.get(pid)}
+                                       for pid in actions["removes"]],
                 "current_schedule": current_schedule,
                 "target_schedule": [{"time": t, "portions": g} for t, g in target_rows]}
     snapshot = [dict(p) for p in enabled]

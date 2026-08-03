@@ -88,6 +88,13 @@
   }
   .banner-error{background:var(--rust-tint); color:var(--rust); border:1px solid color-mix(in srgb, var(--rust) 35%, transparent);}
   .banner-success{background:var(--sage-tint); color:var(--sage); border:1px solid color-mix(in srgb, var(--sage) 35%, transparent);}
+  .banner-info{background:var(--surface-2); color:var(--ink-soft); border:1px solid var(--line);}
+  .banner-warn{background:var(--gold-tint); color:var(--gold-strong); border:1px solid color-mix(in srgb, var(--gold) 40%, transparent);}
+  .jam-tag{
+    font-family:var(--font-mono); font-size:10.5px; color:var(--rust);
+    background:color-mix(in srgb, var(--rust) 12%, transparent);
+    border-radius:3px; padding:1px 5px; margin-left:5px; white-space:nowrap;
+  }
   .banner-icon{flex:0 0 auto; font-size:16px;}
   .banner strong{font-weight:700;}
   .banner[hidden]{display:none;}
@@ -288,7 +295,9 @@
     feedPortions: 1,
     confirmingFeed: false,
     feeding: false,
-    feedResult: null
+    feedResult: null,
+    analyzing: false,
+    planNote: null
   };
 
   function esc(s){
@@ -443,16 +452,23 @@
     }).join("");
   }
 
-  function renderProposedColumn(rows){
+  // min="1", not 0: a zero row now MEANS "delete this meal" (schedule_diff removes it),
+  // which should be a deliberate act rather than one stepper click past 1.
+  function renderProposedColumn(rows, blocksByTime){
     if (!rows.length){
       return '<div class="empty-row">Nothing proposed.</div>';
     }
+    var blocks = blocksByTime || {};
     return rows.map(function(r, i){
+      var jams = blocks[r.time] || 0;
       return '<div class="sched-row">' +
-        '<span class="sched-time">' + esc(r.time) + '</span>' +
+        '<span class="sched-time">' + esc(r.time) +
+          (jams ? ' <span class="jam-tag" title="grain-outlet blocks near this meal">' +
+            esc(jams) + ' jam' + (jams === 1 ? "" : "s") + '</span>' : "") +
+        '</span>' +
         '<div class="stepper" data-idx="' + i + '">' +
           '<button class="stepper-btn" type="button" data-action="dec" aria-label="Decrease portions for ' + esc(r.time) + '">&minus;</button>' +
-          '<input class="stepper-input" type="number" min="0" max="30" step="1" value="' + esc(r.portions) + '" inputmode="numeric" aria-label="Portions at ' + esc(r.time) + '">' +
+          '<input class="stepper-input" type="number" min="1" max="30" step="1" value="' + esc(r.portions) + '" inputmode="numeric" aria-label="Portions at ' + esc(r.time) + '">' +
           '<button class="stepper-btn" type="button" data-action="inc" aria-label="Increase portions for ' + esc(r.time) + '">&plus;</button>' +
         '</div>' +
       '</div>';
@@ -487,7 +503,7 @@
       var wrap = btn.closest(".stepper");
       var idx = Number(wrap.getAttribute("data-idx"));
       var delta = btn.getAttribute("data-action") === "inc" ? 1 : -1;
-      var next = Math.max(0, (Number(state.edited[idx].portions) || 0) + delta);
+      var next = Math.max(1, (Number(state.edited[idx].portions) || 0) + delta);
       state.edited[idx].portions = next;
       wrap.querySelector(".stepper-input").value = next;
       refreshTotals();
@@ -497,7 +513,7 @@
       if (!input) return;
       var wrap = input.closest(".stepper");
       var idx = Number(wrap.getAttribute("data-idx"));
-      var next = Math.max(0, Math.round(Number(input.value) || 0));
+      var next = Math.max(1, Math.round(Number(input.value) || 0));
       state.edited[idx].portions = next;
       input.value = next;
       refreshTotals();
@@ -516,6 +532,10 @@
   function syncCurrentSchedule(res){
     if (!res || !res.current_schedule || !state.analysis) return;
     state.analysis.current_schedule = res.current_schedule;
+    // The total must move with the rows. Leaving it stale made refreshTotals compare the
+    // edited plan against a number the device no longer holds, so the over-cap warning
+    // and the Save button disagreed with what a write would actually be refused for.
+    state.analysis.daily_total_portions = scheduleTotal(res.current_schedule);
   }
 
   function renderPreviewResult(res){
@@ -532,9 +552,16 @@
     var adds = renderDiffList(res.would_add, function(a){
       return esc(a.executionTime) + " &mdash; <b>" + esc(a.grainNum) + "</b> portions (new)";
     });
-    var removes = renderDiffList(res.would_remove, function(id){
-      return "row id " + esc(id) + " removed";
-    });
+    // The server resolves ids to meal times for us (would_remove_times), because only it
+    // holds that map. Fall back to the bare id list if an older server omits the field.
+    var removes = (res.would_remove_times
+      ? renderDiffList(res.would_remove_times, function(r){
+          return r.time ? (esc(r.time) + " &mdash; meal removed")
+                        : ("row id " + esc(r.id) + " removed");
+        })
+      : renderDiffList(res.would_remove, function(id){
+          return "row id " + esc(id) + " removed";
+        }));
     state.resultPanel =
       '<div class="result-panel"><h4>Preview &mdash; nothing written yet</h4>' +
       '<div class="diff-cols">' +
@@ -645,13 +672,14 @@
 
   function doFeed(){
     var name = state.selected;
+    var token = state.requestToken;
     var portions = state.feedPortions;
     state.confirmingFeed = false;
     state.feeding = true;
     state.feedResult = null;
     renderMain();
     API.feed(name, portions).then(function(res){
-      if (state.selected !== name) return;  // switched pets mid-flight
+      if (state.selected !== name || token !== state.requestToken) return;  // switched pets / reanalyzed mid-flight
       state.feeding = false;
       if (res.ok === false){
         state.feedResult = {ok: false, message: res.error || "Feed failed."};
@@ -662,11 +690,89 @@
       }
       renderMain();
     }).catch(function(err){
-      if (state.selected !== name) return;
+      if (state.selected !== name || token !== state.requestToken) return;
       state.feeding = false;
       state.feedResult = {ok: false, message: "Network error while feeding: " + err};
       renderMain();
     });
+  }
+
+  // A recompute is deterministic given the same history, so an identical plan is a real
+  // and common outcome. Saying so out loud is the honest version of the old silent no-op.
+  function renderPlanNote(){
+    if (!state.planNote) return "";
+    var n = state.planNote;
+    return '<div class="banner ' + (n.changed ? "banner-success" : "banner-info") + '">' +
+      '<span class="banner-icon">' + (n.changed ? "&#10003;" : "&#8635;") + '</span>' +
+      '<span>' + n.html + '</span></div>';
+  }
+
+  function windowLabel(days){
+    if (days == null) return "all available history";
+    return days + " day" + (days === 1 ? "" : "s") + " since the last change";
+  }
+
+  function planNoteFor(a, prev){
+    var rows = a.recommended_schedule || [];
+    var total = scheduleTotal(rows);
+    var trim = a.trim || {};
+    var ev = a.evidence || {};
+    var since = ev.days_since_change == null ? null : Math.round(ev.days_since_change);
+    var win = windowLabel(since);
+    var rate = esc((trim.jam_rate || 0).toFixed(2));
+
+    if (trim.withheld_reason === "too_early"){
+      return {changed: false, html: "<strong>No trim yet.</strong> The last change is only " +
+        esc(since) + " day" + (since === 1 ? "" : "s") + " old — give it " +
+        esc(Math.max(1, 7 - since)) + " more day(s) before cutting again, so this change " +
+        "has a chance to show an effect."};
+    }
+    if (trim.withheld_reason === "no_known_change"){
+      return {changed: false, html: "<strong>Plan recomputed.</strong> No schedule-change " +
+        "date is known for this feeder yet, so no trim is proposed. Save a schedule here " +
+        "once and the evidence window starts from that write."};
+    }
+    if (trim.applied > 0){
+      var byTime = trim.blocks_by_time || {};
+      var cut = Object.keys(byTime).sort(function(x, y){ return byTime[y] - byTime[x]; })
+                      .slice(0, 2);
+      return {changed: true, html: "<strong>New plan: " + esc(a.daily_total_portions) +
+        " → " + esc(total) + " portions/day.</strong> Trimmed " + esc(trim.applied) +
+        " at the jammiest times (" + esc(cut.join(", ")) + "). Jams ran " + rate +
+        "/day over " + esc(win) + "."};
+    }
+    if (prev && JSON.stringify(prev) === JSON.stringify(rows)){
+      return {changed: false, html: "<strong>No change.</strong> Same plan as before — " +
+        "jams ran " + rate + "/day over " + esc(win) +
+        ", which is not enough to justify a cut."};
+    }
+    return {changed: true, html: "<strong>Plan recomputed</strong> from " + esc(win) +
+      ". Daily total unchanged at " + esc(total) + " portions."};
+  }
+
+  // The hopper running dry looks exactly like over-feeding from the schedule's point of
+  // view, but trimming will not fix it. ferris and saffron deliver ~7.5 of 12 scheduled.
+  function renderSupplyWarning(a){
+    var ev = a.evidence || {};
+    var lows = ev.grain_low_since || 0;
+    var delivered = ev.delivered_per_day_since;
+    var scheduled = ev.scheduled_per_day || 0;
+    var shortfall = (scheduled > 0 && delivered != null && delivered < scheduled * 0.85);
+    if (!lows && !shortfall) return "";
+    var bits = [];
+    if (shortfall){
+      bits.push("only <b>" + esc(delivered.toFixed(1)) + "</b> of <b>" + esc(scheduled) +
+                "</b> scheduled portions/day actually reached the bowl");
+    }
+    if (lows){
+      bits.push("the feeder reported low food <b>" + esc(lows) + "</b> time" +
+                (lows === 1 ? "" : "s"));
+    }
+    return '<div class="banner banner-warn" role="alert"><span class="banner-icon">&#9888;</span>' +
+      '<span><strong>The hopper is not keeping up.</strong> Since the last change, ' +
+      bits.join(" and ") + '. Trimming the schedule will not fix this — refill it and ' +
+      'check the outlet, or the numbers above understate what ' + esc(a.pet) + ' is missing.' +
+      '</span></div>';
   }
 
   function renderPetView(){
@@ -675,10 +781,23 @@
       petView.innerHTML = '<div class="skeleton"></div>';
       return;
     }
+    // A failed analysis MUST still offer a way to retry. Without the actions row here,
+    // one cloud hiccup stranded the user: selectPet early-returns on the already-selected
+    // pet, so re-clicking the same cat did nothing and only a page reload recovered.
     if (a.ok === false){
       petView.innerHTML =
         '<div class="pet-header"><h1>' + esc(state.selected) + '</h1></div>' +
-        '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span><span>' + esc(a.error || "Could not load analysis.") + '</span></div>';
+        '<div class="banner banner-error" role="alert"><span class="banner-icon">⚠</span><span>' + esc(a.error || "Could not load analysis.") + '</span></div>' +
+        '<div class="card"><h2>Actions</h2>' +
+          '<div class="actions-row" id="actions-row">' +
+            '<button class="btn btn-ghost" id="btn-reanalyze" type="button"' +
+              (state.analyzing ? " disabled" : "") + '>&#8635; ' +
+              (state.analyzing ? "Reading history&hellip;" : "Try again") +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      document.getElementById("btn-reanalyze")
+        .addEventListener("click", function(){ reanalyze(); });
       return;
     }
 
@@ -697,7 +816,7 @@
             '<div id="now-col">' + renderNowColumn(a.current_schedule || []) + '</div>' +
           '</div>' +
           '<div class="compare-col"><h3><span class="dot dot-proposed"></span>Proposed</h3>' +
-            '<div id="proposed-col">' + renderProposedColumn(state.edited) + '</div>' +
+            '<div id="proposed-col">' + renderProposedColumn(state.edited, (a.trim || {}).blocks_by_time) + '</div>' +
           '</div>' +
         '</div>' +
         '<div class="total-row">' +
@@ -709,7 +828,9 @@
 
     var actionsHtml =
       '<div class="actions-row" id="actions-row">' +
-        '<button class="btn btn-ghost" id="btn-reanalyze" type="button">&#8635; Reanalyze</button>' +
+        '<button class="btn btn-ghost" id="btn-reanalyze" type="button"' +
+          (state.analyzing ? " disabled" : "") + '>&#8635; ' +
+          (state.analyzing ? "Reading history&hellip;" : "Reanalyze") + '</button>' +
         '<button class="btn btn-ghost" id="btn-preview" type="button"' + (hasRecommendation ? "" : " disabled") + '>Preview changes</button>' +
         '<button class="btn btn-primary" id="btn-save" type="button"' + (hasRecommendation ? "" : " disabled") + '>Save to feeder</button>' +
       '</div>';
@@ -721,6 +842,8 @@
         renderFeedNow() +
       '</div>' +
       renderFeedResult() +
+      renderPlanNote() +
+      renderSupplyWarning(a) +
       '<div class="card">' +
         '<h2>When ' + esc(a.pet) + ' actually eats</h2>' +
         '<p class="card-caption">Feeder visits over the last ' + esc(a.days || 60) + ' days, in 30-minute bins.</p>' +
@@ -806,43 +929,68 @@
     loadAnalysis();
   }
 
+  function hasPendingEdits(){
+    var a = state.analysis;
+    if (!a || !a.recommended_schedule) return false;
+    return JSON.stringify(a.recommended_schedule.map(function(r){
+      return {time: r.time, portions: r.portions};
+    })) !== JSON.stringify(state.edited);
+  }
+
   function loadAnalysis(){
     var token = ++state.requestToken;
     var name = state.selected;
+    var prev = state.analysis && state.analysis.recommended_schedule;
+    // The round trip takes seconds against the PetLibro cloud. Without this flag the
+    // button looked dead: same request, same deterministic answer, no visible change.
+    state.analyzing = true;
+    renderMain();
     API.analysis(name, 60).then(function(res){
       if (token !== state.requestToken) return; // stale response, ignore
+      state.analyzing = false;
       state.analysis = res;
       state.edited = (res.recommended_schedule || []).map(function(r){
         return {time: r.time, portions: r.portions};
       });
       state.resultPanel = null;
+      state.planNote = res.ok === false ? null : planNoteFor(res, prev);
       if (res.ok === false) showError(res.error || "Could not load analysis for " + name + ".");
       else clearError();
       renderMain();
     }).catch(function(err){
       if (token !== state.requestToken) return;
+      state.analyzing = false;
       state.analysis = {ok: false, error: "Network error while loading analysis: " + err};
+      state.planNote = null;
       showError(state.analysis.error);
       renderMain();
     });
   }
 
   function reanalyze(){
+    if (hasPendingEdits() &&
+        !window.confirm("Reanalyze will replace your edited portions with a fresh plan. Continue?")){
+      return;
+    }
     state.resultPanel = null;
+    state.planNote = null;
     state.confirmingSave = false;
+    state.feedResult = null;   // a stale "Fed 3 portions" must not sit beside a new plan
     loadAnalysis();
   }
 
   function doPreview(){
     if (!state.analysis || !state.analysis.ok) return;
     var name = state.selected;
+    var token = state.requestToken;
     state.resultPanel = '<p class="loading-tag">Checking with the feeder&hellip;</p>';
     renderMain();
     API.apply(name, state.edited, false).then(function(res){
-      if (state.selected !== name) return;
+      if (state.selected !== name || token !== state.requestToken) return;
       if (res.ok === false) showError(res.error || "Preview failed.");
       renderPreviewResult(res);
     }).catch(function(err){
+      if (state.selected !== name || token !== state.requestToken) return;
       renderPreviewResult({ok: false, error: "Network error during preview: " + err});
     });
   }
@@ -854,15 +1002,17 @@
 
   function doSave(){
     var name = state.selected;
+    var token = state.requestToken;
     state.resultPanel = '<p class="loading-tag">Writing schedule to the feeder&hellip;</p>';
     state.confirmingSave = false;
     renderMain();
     API.apply(name, state.edited, true).then(function(res){
-      if (state.selected !== name) return;
+      if (state.selected !== name || token !== state.requestToken) return;
       if (res.ok === false) showError(res.error || "Save failed.");
       else clearError();
       renderApplyResult(res);
     }).catch(function(err){
+      if (state.selected !== name || token !== state.requestToken) return;
       renderApplyResult({ok: false, error: "Network error while saving: " + err});
     });
   }

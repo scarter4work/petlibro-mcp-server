@@ -524,3 +524,17 @@ async def test_dry_run_does_not_journal(tmp_path):
     await tools.apply_target_rows(cfg(), client, "ferris", [("14:00", 1)],
                                   apply=False, now_ms=_NOW_MS, journal_path=jpath)
     assert journal.last_at_ms(jpath, "SN-F") is None
+
+
+async def test_dry_run_resolves_removed_plan_ids_to_times():
+    """A preview must be able to name the meal it would delete, not just its row id."""
+    client = _jammy_client(blocks=1, days_since=30)
+    client.feeding_plans = AsyncMock(return_value=[
+        {"id": 41, "executionTime": "14:00", "grainNum": 2, "enable": True},
+        {"id": 42, "executionTime": "22:00", "grainNum": 4, "enable": True},
+    ])
+    res = await tools.apply_target_rows(cfg(), client, "ferris", [("22:00", 4)],
+                                        apply=False, now_ms=_NOW_MS)
+    out = res[0]
+    assert out["would_remove"] == [41]
+    assert out["would_remove_times"] == [{"id": 41, "time": "14:00"}]
