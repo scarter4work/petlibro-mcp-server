@@ -141,3 +141,25 @@ def test_add_uses_defaults_when_no_current_template():
     d = diff_schedule([], [("09:00", 2)])
     assert d["updates"] == [] and d["removes"] == []
     assert d["adds"][0]["repeatDay"] == "[1,2,3,4,5,6,7]"
+
+
+def test_zero_portion_target_removes_an_existing_row():
+    current = [{"id": 7, "executionTime": "14:00", "grainNum": 2, "enable": True},
+               {"id": 8, "executionTime": "22:00", "grainNum": 4, "enable": True}]
+    actions = diff_schedule(current, [("14:00", 0), ("22:00", 4)])
+    assert actions["removes"] == [7]
+    assert [u["id"] for u in actions["updates"]] == [8]
+    assert actions["adds"] == []
+
+
+def test_zero_portion_target_is_never_added():
+    actions = diff_schedule([], [("09:00", 0)])
+    assert actions == {"updates": [], "adds": [], "removes": []}
+
+
+def test_zero_portion_target_does_not_write_grainnum_zero():
+    """Regression: a zeroed meal must not survive as a 0-portion plan row."""
+    current = [{"id": 1, "executionTime": "10:00", "grainNum": 3, "enable": True}]
+    actions = diff_schedule(current, [("10:00", 0)])
+    assert all(u["grainNum"] != 0 for u in actions["updates"])
+    assert all(a["grainNum"] != 0 for a in actions["adds"])

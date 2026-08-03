@@ -29,6 +29,11 @@ def diff_schedule(current_enabled: list[dict], target_rows: list[tuple[str, int]
 
     target: dict[str, int] = {}
     for time, grain in target_rows:
+        # A zero-portion row means "no meal at this time", matching planner.plan_rows
+        # which drops them. Keeping it would write a useless grainNum=0 row instead of
+        # removing the meal, and the two paths would disagree about what zero means.
+        if grain <= 0:
+            continue
         target[time] = grain  # last wins; the planner does not emit duplicate times
 
     template = min(current_enabled, key=lambda p: p.get("executionTime", ""),
