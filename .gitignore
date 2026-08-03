@@ -8,3 +8,4 @@ pets.toml
 .playwright-mcp/
 webui-*.png
 deployed-*.png
+.petlibro-journal.jsonl
