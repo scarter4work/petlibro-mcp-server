@@ -68,8 +68,9 @@ TOOL_DEFS = [
         name="analyze_rhythm",
         description=("Recommend-only: compute each cat's natural eating rhythm "
                      "from ~60d of history and report the current vs. a "
-                     "rhythm-timed schedule (same daily total). No writes. "
-                     "Omit 'pet' for all."),
+                     "rhythm-timed schedule. May recommend a LOWER daily total "
+                     "when the feeder's grain-outlet-block history shows "
+                     "over-feeding. No writes. Omit 'pet' for all."),
         inputSchema={
             "type": "object",
             "properties": {

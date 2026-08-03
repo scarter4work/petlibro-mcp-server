@@ -13,6 +13,18 @@ def cfg():
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_journal(tmp_path, monkeypatch):
+    """Never let a test write the repo's real journal file.
+
+    tools._default_journal_path() honours PETLIBRO_JOURNAL, so pointing it at
+    tmp_path keeps each test's applied-schedule history to itself. Without this,
+    an apply test stamps a real-clock entry that later tests read as "the
+    schedule changed just now", zeroing days_since_change.
+    """
+    monkeypatch.setenv("PETLIBRO_JOURNAL", str(tmp_path / "journal.jsonl"))
+
+
 @pytest.fixture
 def client():
     m = AsyncMock()
@@ -212,10 +224,10 @@ async def test_analyze_rhythm_treats_missing_enable_as_enabled():
     assert res[0]["daily_total_portions"] == 4
 
 
-async def test_compute_rhythm_returns_enabled_and_target():
+async def test_compute_rhythm_returns_enabled_and_target(tmp_path):
     client = _client_for_analyze()  # existing helper: 10 visits @ 08:00, plans 3+2 enabled, 1 disabled
     feeder = cfg().resolve_feeders(["ferris"])[0]
-    rc = await tools._compute_rhythm(client, feeder, 60)
+    rc = await tools._compute_rhythm(client, feeder, 60, _NOW_MS, tmp_path / "j.jsonl")
     assert rc["total"] == 5                 # enabled 3+2, disabled row excluded
     assert rc["eating_visits"] == 10
     assert len(rc["enabled"]) == 2          # disabled row excluded
@@ -405,3 +417,110 @@ async def test_apply_target_rows_unknown_pet():
     client = _FakePlanClient([], _work_record_days())
     res = await tools.apply_target_rows(cfg(), client, "mittens", [("08:00", 1)])
     assert res[0]["ok"] is False and "mittens" in res[0]["error"]
+
+
+# ---------- jam-aware trimming ----------
+from petlibro_mcp.evidence import MS_PER_DAY  # noqa: E402
+
+_NOW_MS = 100 * MS_PER_DAY
+
+
+def _jammy_client(blocks=30, days_since=30, total_rows=(("14:00", 5), ("22:00", 7))):
+    """A feeder whose schedule changed `days_since` ago and jammed `blocks` times since."""
+    change_at = _NOW_MS - days_since * MS_PER_DAY
+    records = []
+    for i in range(blocks):
+        at = change_at + int((i + 1) * (days_since * MS_PER_DAY) / (blocks + 1))
+        records.append({"type": "GRAIN_OUTLET_BLOCK_REMOVED",
+                        "eventType": "GRAIN_OUTLET_BLOCK_REMOVED",
+                        "recordTime": at, "formatRecordTime": "2026-08-01 14:05"})
+    for i in range(40):
+        records.append({"eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
+                        "recordTime": change_at + i, "formatRecordTime": "2026-08-01 14:00",
+                        "params": '{"seconds":"02m00s"}'})
+    m = AsyncMock()
+    m.work_record = AsyncMock(return_value=[{"workRecords": records}])
+    m.feeding_plans = AsyncMock(return_value=[
+        {"id": i + 1, "executionTime": t, "grainNum": g, "enable": True,
+         "updateTime": change_at}
+        for i, (t, g) in enumerate(total_rows)])
+    return m
+
+
+async def test_analyze_rhythm_trims_a_jammy_feeder_below_its_current_total():
+    client = _jammy_client(blocks=30, days_since=30)
+    res = await tools.analyze_rhythm(cfg(), client, "ferris", days=60, now_ms=_NOW_MS)
+    out = res[0]
+    assert out["ok"] is True
+    assert out["daily_total_portions"] == 12   # the real fleet's flat default
+    recommended = sum(r["portions"] for r in out["recommended_schedule"])
+    assert recommended < 12, "a jammy feeder must be recommended LESS than it gets now"
+    assert out["trim"]["applied"] > 0
+
+
+async def test_analyze_rhythm_leaves_a_clean_feeder_alone():
+    client = _jammy_client(blocks=1, days_since=30)
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    assert out["trim"]["applied"] == 0
+    assert sum(r["portions"] for r in out["recommended_schedule"]) == 12
+
+
+async def test_analyze_rhythm_withholds_the_trim_when_too_early():
+    """A change 2 days old has no verdict yet, so no further cut is proposed."""
+    client = _jammy_client(blocks=30, days_since=2)
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    assert out["trim"]["applied"] == 0
+    assert out["trim"]["withheld_reason"] == "too_early"
+    assert out["evidence"]["verdict"] == "too_early"
+
+
+async def test_analyze_rhythm_never_recommends_below_the_daily_floor():
+    client = _jammy_client(blocks=300, days_since=30,
+                           total_rows=(("08:00", 5), ("20:00", 4)))
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    assert sum(r["portions"] for r in out["recommended_schedule"]) >= 8
+
+
+async def test_analyze_rhythm_reports_blocks_per_meal():
+    client = _jammy_client(blocks=10, days_since=30)
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    assert sum(out["trim"]["blocks_by_time"].values()) == 10
+
+
+async def test_analyze_rhythm_evidence_reports_days_since_change():
+    client = _jammy_client(blocks=5, days_since=30)
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    assert round(out["evidence"]["days_since_change"]) == 30
+
+
+async def test_apply_target_rows_journals_what_it_wrote(tmp_path):
+    from petlibro_mcp import journal
+    client = _jammy_client(blocks=1, days_since=30)
+    client.remove_plan = AsyncMock(return_value=None)
+    client.update_plan = AsyncMock(return_value=None)
+    client.add_plan = AsyncMock(return_value=None)
+    client.feeding_plans = AsyncMock(side_effect=[
+        [{"id": 1, "executionTime": "14:00", "grainNum": 2, "enable": True,
+          "updateTime": 1}],
+        [{"id": 1, "executionTime": "14:00", "grainNum": 1, "enable": True,
+          "updateTime": 1}],
+    ])
+    jpath = tmp_path / "j.jsonl"
+    res = await tools.apply_target_rows(cfg(), client, "ferris", [("14:00", 1)],
+                                        apply=True, now_ms=_NOW_MS, journal_path=jpath)
+    assert res[0]["ok"] is True
+    assert journal.last_at_ms(jpath, "SN-F") == _NOW_MS
+
+
+async def test_dry_run_does_not_journal(tmp_path):
+    from petlibro_mcp import journal
+    client = _jammy_client(blocks=1, days_since=30)
+    jpath = tmp_path / "j.jsonl"
+    await tools.apply_target_rows(cfg(), client, "ferris", [("14:00", 1)],
+                                  apply=False, now_ms=_NOW_MS, journal_path=jpath)
+    assert journal.last_at_ms(jpath, "SN-F") is None

@@ -7,9 +7,12 @@ HOST="${PETLIBRO_DEPLOY_HOST:-root@192.168.68.53}"
 DEST=/opt/petlibro-webui
 
 echo ">> syncing repo to $HOST:$DEST"
+# The journal is deploy-surviving state, not source: --delete would wipe the
+# applied-schedule history that dates every evidence window.
 rsync -az --delete \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
   --exclude '.superpowers' --exclude '.playwright-mcp' --exclude '*.png' \
+  --exclude '.petlibro-journal.jsonl' \
   ./ "$HOST:$DEST/"
 
 echo ">> copying credentials (.env)"
