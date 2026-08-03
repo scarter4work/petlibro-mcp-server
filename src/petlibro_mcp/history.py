@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import re
+from dataclasses import dataclass
 
 _DUR = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 _ATE_FOR = re.compile(r"ate for ([0-9hms]+)")
@@ -9,6 +10,27 @@ _HHMM = re.compile(r"\b(\d{1,2}):(\d{2})")
 
 _EAT_EVENT = "PET_IDENTIFY_LEAVE_EVENT_BIND_PET"
 _DISPENSE_TYPE = "GRAIN_OUTPUT_SUCCESS"
+_BLOCK_TYPE = "GRAIN_OUTLET_BLOCK_REMOVED"
+_MANUAL_EVENT = "MANUAL_FEEDING_SUCCESS"
+_GRAIN_LOW_EVENTS = frozenset({
+    "FEEDING_PLAN_GRAIN_NOT_ENOUGH",
+    "MANUAL_FEEDING_GRAIN_NOT_ENOUGH",
+})
+
+
+@dataclass(frozen=True)
+class Event:
+    """One workRecord entry, placed on both the 24h clock and the calendar.
+
+    `minute` is minute-of-day from the device wall clock (the same clock the
+    feeding plans use); `at_ms` is the absolute recordTime, needed to split
+    history before/after a schedule change. `amount` is eating seconds for
+    "eat", portions for either dispense kind, and 0 otherwise.
+    """
+    kind: str
+    minute: int
+    at_ms: int
+    amount: int
 
 
 def parse_duration(text: str) -> int:
@@ -36,30 +58,60 @@ def time_of_day_minutes(format_record_time: str) -> int | None:
     return h * 60 + mn
 
 
-def parse_work_record(days: list[dict] | None) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Split day-grouped workRecords into (eats, dispenses) event series.
+def _eat_seconds(w: dict) -> int:
+    """Eating duration for a visit: the params JSON first, the content string second."""
+    secs = 0
+    try:
+        secs = parse_duration(json.loads(w.get("params") or "").get("seconds", ""))
+    except (ValueError, TypeError, AttributeError):
+        secs = 0
+    if not secs:
+        mt = _ATE_FOR.search(w.get("content") or "")
+        secs = parse_duration(mt.group(1)) if mt else 0
+    return secs
 
-    eats: (minute_of_day, eating_duration_s); dispenses: (minute_of_day, grain).
-    Each event is placed by its formatRecordTime; events lacking a parseable
-    one are skipped (they cannot be placed on the daily clock).
+
+def parse_events(days: list[dict] | None) -> list[Event]:
+    """Flatten day-grouped workRecords into a typed event stream.
+
+    Records without a parseable formatRecordTime are skipped — they cannot be
+    placed on the daily clock. A grain-low dispense yields TWO events: it did
+    deliver food, and it also warns that the hopper is running out.
     """
-    eats: list[tuple[int, int]] = []
-    dispenses: list[tuple[int, int]] = []
+    out: list[Event] = []
     for day in days or []:
         for w in day.get("workRecords", []):
             minute = time_of_day_minutes(w.get("formatRecordTime") or "")
             if minute is None:
                 continue
-            if w.get("eventType") == _EAT_EVENT:
-                secs = 0
-                try:
-                    secs = parse_duration(json.loads(w.get("params") or "").get("seconds", ""))
-                except (ValueError, TypeError, AttributeError):
-                    secs = 0
-                if not secs:
-                    mt = _ATE_FOR.search(w.get("content") or "")
-                    secs = parse_duration(mt.group(1)) if mt else 0
-                eats.append((minute, secs))
-            elif w.get("type") == _DISPENSE_TYPE:
-                dispenses.append((minute, int(w.get("actualGrainNum") or 0)))
+            at_ms = int(w.get("recordTime") or 0)
+            etype = w.get("eventType")
+            wtype = w.get("type")
+            if etype == _EAT_EVENT:
+                out.append(Event("eat", minute, at_ms, _eat_seconds(w)))
+            elif wtype == _DISPENSE_TYPE:
+                grain = int(w.get("actualGrainNum") or 0)
+                kind = ("dispense_manual" if etype == _MANUAL_EVENT
+                        else "dispense_plan")
+                out.append(Event(kind, minute, at_ms, grain))
+                if etype in _GRAIN_LOW_EVENTS:
+                    out.append(Event("grain_low", minute, at_ms, 0))
+            elif wtype == _BLOCK_TYPE:
+                out.append(Event("block", minute, at_ms, 0))
+    return out
+
+
+def parse_work_record(days: list[dict] | None) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Split day-grouped workRecords into (eats, dispenses) event series.
+
+    eats: (minute_of_day, eating_duration_s); dispenses: (minute_of_day, grain).
+    Kept for callers that only need the 24h-clock view. `dispenses` deliberately
+    includes BOTH scheduled and manual feeds, preserving the original contract —
+    callers measuring schedule *delivery* must use parse_events and filter to
+    "dispense_plan" instead, or hand-feeding will look like the plan working.
+    """
+    events = parse_events(days)
+    eats = [(e.minute, e.amount) for e in events if e.kind == "eat"]
+    dispenses = [(e.minute, e.amount) for e in events
+                 if e.kind in ("dispense_plan", "dispense_manual")]
     return eats, dispenses

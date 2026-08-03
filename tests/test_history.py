@@ -1,4 +1,5 @@
-from petlibro_mcp.history import parse_duration, parse_work_record, time_of_day_minutes
+from petlibro_mcp.history import (Event, parse_duration, parse_events,
+                                  parse_work_record, time_of_day_minutes)
 
 
 def test_parse_duration_variants():
@@ -57,3 +58,77 @@ def test_time_of_day_minutes_parses_device_wall_clock():
     assert time_of_day_minutes("2026-07-07 07:27:49") == 7 * 60 + 27
     assert time_of_day_minutes("garbage") is None
     assert time_of_day_minutes("") is None
+
+
+def _day(*records):
+    return [{"workRecords": list(records)}]
+
+
+def test_parse_events_reads_block_with_timestamp_and_minute():
+    days = _day({
+        "type": "GRAIN_OUTLET_BLOCK_REMOVED",
+        "eventType": "GRAIN_OUTLET_BLOCK_REMOVED",
+        "recordTime": 1785608794000,
+        "formatRecordTime": "2026-08-01 13:26",
+    })
+    events = parse_events(days)
+    assert events == [Event(kind="block", minute=13 * 60 + 26,
+                            at_ms=1785608794000, amount=0)]
+
+
+def test_parse_events_separates_manual_from_scheduled_dispense():
+    days = _day(
+        {"type": "GRAIN_OUTPUT_SUCCESS", "eventType": "FEEDING_PLAN_SUCCESS",
+         "recordTime": 1000, "formatRecordTime": "2026-08-01 10:30",
+         "actualGrainNum": 3},
+        {"type": "GRAIN_OUTPUT_SUCCESS", "eventType": "MANUAL_FEEDING_SUCCESS",
+         "recordTime": 2000, "formatRecordTime": "2026-08-01 11:21",
+         "actualGrainNum": 2},
+    )
+    kinds = {e.kind: e.amount for e in parse_events(days)}
+    assert kinds == {"dispense_plan": 3, "dispense_manual": 2}
+
+
+def test_parse_events_reads_grain_low():
+    days = _day({
+        "type": "GRAIN_OUTPUT_SUCCESS",
+        "eventType": "FEEDING_PLAN_GRAIN_NOT_ENOUGH",
+        "recordTime": 3000, "formatRecordTime": "2026-08-01 06:00",
+        "actualGrainNum": 3,
+    })
+    events = parse_events(days)
+    # a grain-low dispense still delivered food, so it is BOTH a delivery and a warning
+    assert sorted(e.kind for e in events) == ["dispense_plan", "grain_low"]
+    assert [e.amount for e in events if e.kind == "dispense_plan"] == [3]
+
+
+def test_parse_events_reads_eat_seconds():
+    days = _day({
+        "type": "DETECTION_EVENT",
+        "eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
+        "recordTime": 4000, "formatRecordTime": "2026-08-01 14:05",
+        "params": '{"petName":"Bridget","seconds":"01m37s"}',
+    })
+    assert parse_events(days) == [Event(kind="eat", minute=14 * 60 + 5,
+                                        at_ms=4000, amount=97)]
+
+
+def test_parse_events_skips_records_without_parseable_time():
+    days = _day({"type": "GRAIN_OUTLET_BLOCK_REMOVED",
+                 "eventType": "GRAIN_OUTLET_BLOCK_REMOVED",
+                 "recordTime": 5000, "formatRecordTime": ""})
+    assert parse_events(days) == []
+
+
+def test_parse_work_record_still_counts_both_dispense_kinds():
+    """Regression guard: the old contract lumps manual in with scheduled."""
+    days = _day(
+        {"type": "GRAIN_OUTPUT_SUCCESS", "eventType": "FEEDING_PLAN_SUCCESS",
+         "recordTime": 1000, "formatRecordTime": "2026-08-01 10:30",
+         "actualGrainNum": 3},
+        {"type": "GRAIN_OUTPUT_SUCCESS", "eventType": "MANUAL_FEEDING_SUCCESS",
+         "recordTime": 2000, "formatRecordTime": "2026-08-01 11:21",
+         "actualGrainNum": 2},
+    )
+    _eats, dispenses = parse_work_record(days)
+    assert sorted(dispenses) == [(10 * 60 + 30, 3), (11 * 60 + 21, 2)]
