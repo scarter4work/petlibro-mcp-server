@@ -538,3 +538,32 @@ async def test_dry_run_resolves_removed_plan_ids_to_times():
     out = res[0]
     assert out["would_remove"] == [41]
     assert out["would_remove_times"] == [{"id": 41, "time": "14:00"}]
+
+
+async def test_jam_rate_denominator_is_clamped_to_available_history():
+    """ferris's case: the schedule changed 26d ago but the cloud returns only 13d of
+    records. Dividing blocks by 26 halves the true rate. The gate still uses the real
+    26-day age; only the rate denominator is clamped to the data we actually have."""
+    change_at = _NOW_MS - 26 * MS_PER_DAY
+    history_start = _NOW_MS - 13 * MS_PER_DAY
+    records = []
+    for i in range(13):  # 13 blocks spread over the 13 days we have data for
+        records.append({"type": "GRAIN_OUTLET_BLOCK_REMOVED",
+                        "eventType": "GRAIN_OUTLET_BLOCK_REMOVED",
+                        "recordTime": history_start + i * MS_PER_DAY,
+                        "formatRecordTime": "2026-08-01 14:05"})
+    records.append({"eventType": "PET_IDENTIFY_LEAVE_EVENT_BIND_PET",
+                    "recordTime": history_start, "formatRecordTime": "2026-08-01 14:00",
+                    "params": '{"seconds":"02m00s"}'})
+    client = AsyncMock()
+    client.work_record = AsyncMock(return_value=[{"workRecords": records}])
+    client.feeding_plans = AsyncMock(return_value=[
+        {"id": 1, "executionTime": "14:00", "grainNum": 12, "enable": True,
+         "updateTime": change_at}])
+
+    out = (await tools.analyze_rhythm(cfg(), client, "ferris", days=60,
+                                      now_ms=_NOW_MS))[0]
+    # 13 blocks over 13 days of data == 1.0/day, NOT 13/26 == 0.5/day
+    assert out["trim"]["jam_rate"] == 1.0
+    # the eligibility gate still sees the change's true age
+    assert round(out["evidence"]["days_since_change"]) == 26

@@ -201,24 +201,29 @@ async def _compute_rhythm(client, feeder, days: int, now_ms: int,
     current = [(p.get("executionTime"), int(p.get("grainNum") or 0)) for p in enabled]
     total = sum(g for _, g in current)
 
+    history_start = min((e.at_ms for e in events), default=now_ms)
     change_at = EV.last_change_at(enabled, J.last_at_ms(journal_path, feeder.serial))
     if change_at is None:
         days_since = None
         since = events
         rate_before = None
+        rate_days = EV.window_days(history_start, now_ms)
     else:
+        # days_since is the change's TRUE age, and only that gates eligibility.
         days_since = EV.window_days(change_at, now_ms)
         before, since = EV.split_events(events, change_at)
-        history_start = min((e.at_ms for e in events), default=change_at)
         before_days = EV.window_days(history_start, change_at)
         rate_before = (TR.jam_rate(len([e for e in before if e.kind == "block"]),
                                    before_days)
                        if before_days > 0 else None)
+        # The RATE denominator is a different question: over how many days do we
+        # actually have records? The cloud returns far less history than the window
+        # can span — ferris's schedule changed 26d ago but only 13d of his records
+        # come back — and dividing by the full window halves his true jam rate.
+        rate_days = EV.window_days(max(change_at, history_start), now_ms)
 
-    since_days = days_since if days_since else EV.window_days(
-        min((e.at_ms for e in since), default=now_ms), now_ms)
     blocks_since = [e for e in since if e.kind == "block"]
-    rate_since = TR.jam_rate(len(blocks_since), since_days)
+    rate_since = TR.jam_rate(len(blocks_since), rate_days)
 
     # Meal TIMES come from the rhythm; the trim then lands on the jammiest of them.
     tod = [(minute, max(dur, 1)) for minute, dur in eats]
@@ -248,8 +253,9 @@ async def _compute_rhythm(client, feeder, days: int, now_ms: int,
             "days_since_change": days_since,
             "jam_rate_before": rate_before,
             "jam_rate_since": rate_since,
-            "delivered_per_day_since": (delivered / since_days
-                                        if since_days > 0 else 0.0),
+            "delivered_per_day_since": (delivered / rate_days
+                                        if rate_days > 0 else 0.0),
+            "evidence_days": rate_days,
             "scheduled_per_day": total,
             "grain_low_since": len([e for e in since if e.kind == "grain_low"]),
             "verdict": EV.verdict(rate_before, rate_since,
