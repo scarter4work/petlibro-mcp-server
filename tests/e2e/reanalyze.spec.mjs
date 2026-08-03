@@ -56,9 +56,18 @@ async function main() {
   const recommended = (body.recommended_schedule || [])
     .reduce((s, r) => s + r.portions, 0);
 
-  // The whole point of the change: a jammy feeder must be recommended LESS.
-  check('jammy cat is recommended below its current total',
-    recommended < currentTotal, `${currentTotal} -> ${recommended}`);
+  // The whole point of the change: a jammy feeder must be recommended LESS — UNLESS the
+  // schedule was changed within MIN_EVIDENCE_DAYS, in which case withholding the trim is
+  // the correct answer and asserting a cut would be asserting the bug back in. Both
+  // states are legitimate, so the invariant is "cut it, or say why not".
+  const withheld = body.trim?.withheld_reason;
+  check('jammy cat is trimmed, or the trim is explicitly withheld',
+    withheld ? withheld === 'too_early' : recommended < currentTotal,
+    `${currentTotal} -> ${recommended}, withheld=${withheld}`);
+  if (withheld === 'too_early') {
+    console.log(`        (note: cooldown active — ` +
+      `${Math.round(body.evidence?.days_since_change)}d since last change)`);
+  }
   check('recommendation respects the 8/day floor',
     recommended >= 8, `got ${recommended}`);
   check('no meal is below 1 portion',
@@ -76,8 +85,15 @@ async function main() {
     /portions\/day|No change|No trim yet|recomputed/i.test(noteText || ''),
     JSON.stringify((noteText || '').slice(0, 90)));
 
+  // Tag count must MATCH the payload, not merely be non-zero. Right after a write the
+  // since-change window holds no jams yet, so zero tags is the honest answer — but if the
+  // payload does report per-meal jams, every one of them has to reach the screen.
+  const uiBody = await (await page.request.get(
+    `${BASE}/api/pets/${CAT}/analysis?days=60`, { timeout: 180000 })).json();
+  const expectedTags = Object.keys(uiBody.trim?.blocks_by_time || {}).length;
   const jamTags = await page.locator('.jam-tag').count();
-  check('jam counts are shown next to meals', jamTags > 0, `${jamTags} tags`);
+  check('jam counts shown for every meal the payload reports',
+    jamTags === expectedTags, `${jamTags} tags, payload reports ${expectedTags}`);
 
   // ---- reanalyze gives visible feedback -------------------------------------
   console.log('\n[ui] reanalyze reports that it ran');
