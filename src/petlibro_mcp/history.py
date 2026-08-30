@@ -71,6 +71,45 @@ def _eat_seconds(w: dict) -> int:
     return secs
 
 
+def classify(w: dict) -> list[Event]:
+    """Typed events for ONE workRecord — 0, 1 or 2 of them.
+
+    Zero when the record has no parseable formatRecordTime (it cannot be placed
+    on the daily clock) or is a type we do not model. Two when a dispense also
+    carries the hopper-running-out warning: it did deliver food, and it also
+    warns the hopper is emptying.
+
+    Split out of parse_events so callers that need the originating record
+    alongside its events — the SQLite store, which keys on the record id — do
+    not have to re-implement this classification and drift from it.
+    """
+    minute = time_of_day_minutes(w.get("formatRecordTime") or "")
+    if minute is None:
+        return []
+    at_ms = int(w.get("recordTime") or 0)
+    etype = w.get("eventType")
+    wtype = w.get("type")
+    if etype == _EAT_EVENT:
+        return [Event("eat", minute, at_ms, _eat_seconds(w))]
+    if wtype == _DISPENSE_TYPE:
+        grain = int(w.get("actualGrainNum") or 0)
+        kind = "dispense_manual" if etype == _MANUAL_EVENT else "dispense_plan"
+        out = [Event(kind, minute, at_ms, grain)]
+        if etype in _GRAIN_LOW_EVENTS:
+            out.append(Event("grain_low", minute, at_ms, 0))
+        return out
+    if wtype == _BLOCK_TYPE:
+        return [Event("block", minute, at_ms, 0)]
+    return []
+
+
+def iter_records(days: list[dict] | None):
+    """Yield every raw workRecord across the day groups, ungrouped."""
+    for day in days or []:
+        for w in day.get("workRecords", []):
+            yield w
+
+
 def parse_events(days: list[dict] | None) -> list[Event]:
     """Flatten day-grouped workRecords into a typed event stream.
 
@@ -79,25 +118,8 @@ def parse_events(days: list[dict] | None) -> list[Event]:
     deliver food, and it also warns that the hopper is running out.
     """
     out: list[Event] = []
-    for day in days or []:
-        for w in day.get("workRecords", []):
-            minute = time_of_day_minutes(w.get("formatRecordTime") or "")
-            if minute is None:
-                continue
-            at_ms = int(w.get("recordTime") or 0)
-            etype = w.get("eventType")
-            wtype = w.get("type")
-            if etype == _EAT_EVENT:
-                out.append(Event("eat", minute, at_ms, _eat_seconds(w)))
-            elif wtype == _DISPENSE_TYPE:
-                grain = int(w.get("actualGrainNum") or 0)
-                kind = ("dispense_manual" if etype == _MANUAL_EVENT
-                        else "dispense_plan")
-                out.append(Event(kind, minute, at_ms, grain))
-                if etype in _GRAIN_LOW_EVENTS:
-                    out.append(Event("grain_low", minute, at_ms, 0))
-            elif wtype == _BLOCK_TYPE:
-                out.append(Event("block", minute, at_ms, 0))
+    for w in iter_records(days):
+        out.extend(classify(w))
     return out
 
 

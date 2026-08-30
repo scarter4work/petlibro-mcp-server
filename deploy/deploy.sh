@@ -7,12 +7,16 @@ HOST="${PETLIBRO_DEPLOY_HOST:-root@192.168.68.53}"
 DEST=/opt/petlibro-webui
 
 echo ">> syncing repo to $HOST:$DEST"
-# The journal is deploy-surviving state, not source: --delete would wipe the
-# applied-schedule history that dates every evidence window.
+# The journal and the event store are deploy-surviving state, not source:
+# --delete would wipe the applied-schedule history that dates every evidence
+# window, and the accumulated event history that outlives the cloud's own
+# 60-day retention. Losing petlibro.db is unrecoverable — the cloud cannot
+# give back records older than its window.
 rsync -az --delete \
   --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '.pytest_cache' \
   --exclude '.superpowers' --exclude '.playwright-mcp' --exclude '*.png' \
   --exclude '.petlibro-journal.jsonl' \
+  --exclude 'petlibro.db' --exclude 'petlibro.db-wal' --exclude 'petlibro.db-shm' \
   ./ "$HOST:$DEST/"
 
 echo ">> copying credentials (.env)"

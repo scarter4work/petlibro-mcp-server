@@ -11,3 +11,8 @@ deployed-*.png
 .petlibro-journal.jsonl
 tests/e2e/node_modules/
 tests/e2e/package-lock.json
+
+# local event store (deploy-surviving state, never source)
+petlibro.db
+petlibro.db-wal
+petlibro.db-shm
