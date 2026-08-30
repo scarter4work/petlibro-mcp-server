@@ -32,6 +32,10 @@ class PetLibroClient:
         await self.ensure_login()
         return await self._api.get_device_real_info(serial)
 
+    async def device_events(self, serial: str) -> dict:
+        await self.ensure_login()
+        return await self._api.device_events(serial)
+
     async def work_record(self, serial: str, days: int = 60, size: int = 1000) -> list:
         await self.ensure_login()
         now = datetime.now(timezone.utc)

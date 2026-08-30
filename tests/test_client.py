@@ -117,3 +117,13 @@ async def test_remove_plan_posts_plan_id():
     api.session.post.assert_awaited_once_with("/device/feedingPlan/remove", json={
         "deviceSn": "SN-1", "planId": 42,
     })
+
+
+async def test_device_events_logs_in_then_fetches(api):
+    """deviceEventsV2 carries the alerts live status omits (low food, stuck rotor)."""
+    api.device_events = AsyncMock(return_value={"eventInfos": []})
+    c = PetLibroClient(make_config(), api=api)
+    out = await c.device_events("SN-FERRIS")
+    api.login.assert_awaited_once()
+    api.device_events.assert_awaited_once_with("SN-FERRIS")
+    assert out == {"eventInfos": []}

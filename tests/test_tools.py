@@ -32,6 +32,8 @@ def client():
     m.open_lid = AsyncMock(return_value=None)
     m.real_info = AsyncMock(return_value={
         "online": True, "surplusGrain": True, "batteryState": "high"})
+    m.device_events = AsyncMock(return_value={"eventInfos": []})
+    m.work_record = AsyncMock(return_value=[])
     return m
 
 
@@ -567,3 +569,65 @@ async def test_jam_rate_denominator_is_clamped_to_available_history():
     assert out["trim"]["jam_rate"] == 1.0
     # the eligibility gate still sees the change's true age
     assert round(out["evidence"]["days_since_change"]) == 26
+
+
+# --- hopper-low / rotor-stuck detection (2026-08-30) ---------------------
+# The live-status fields lie: an empty hopper still reports
+# warehouseSurplusGrain "GOOD". The firmware's real signals are the
+# deviceEventsV2 event keys and the workRecord eventType riding along with a
+# dispense. These tests pin feeder_status to those signals instead.
+
+def _low_food_event():
+    return {"eventInfos": [{"eventKey": "SURPLUS_GRAIN_NOT_ENOUGH",
+                            "content": "Food levels are low. Please refill soon."}]}
+
+
+def _stuck_event():
+    return {"eventInfos": [{"eventKey": "FEEDING_FAILED_BY_STUCK_GRAIN",
+                            "content": "Rotor stuck"}]}
+
+
+def _dispense(event_type, at_ms=1_788_000_000_000, time="2026-08-30 07:00"):
+    return [{"workRecords": [{"type": "GRAIN_OUTPUT_SUCCESS",
+                              "eventType": event_type,
+                              "formatRecordTime": time,
+                              "recordTime": at_ms,
+                              "expectGrainNum": 3, "actualGrainNum": 3}]}]
+
+
+async def test_food_low_true_when_device_raises_low_food_event(client):
+    """The hopper enum says GOOD but the firmware is showing 'add food'."""
+    client.real_info = AsyncMock(return_value={
+        "online": True, "warehouseSurplusGrain": "GOOD"})
+    client.device_events = AsyncMock(return_value=_low_food_event())
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert res[0]["food_low"] is True
+
+
+async def test_food_low_true_when_last_dispense_warned_grain_not_enough(client):
+    """A delivered feed can still carry the hopper-running-out warning."""
+    client.real_info = AsyncMock(return_value={
+        "online": True, "warehouseSurplusGrain": "GOOD"})
+    client.work_record = AsyncMock(
+        return_value=_dispense("FEEDING_PLAN_GRAIN_NOT_ENOUGH"))
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert res[0]["food_low"] is True
+
+
+async def test_food_low_false_when_last_dispense_was_clean(client):
+    """Guard against the detector latching on: a clean feed clears it."""
+    client.real_info = AsyncMock(return_value={
+        "online": True, "warehouseSurplusGrain": "GOOD"})
+    client.work_record = AsyncMock(
+        return_value=_dispense("MANUAL_FEEDING_SUCCESS"))
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert res[0]["food_low"] is False
+
+
+async def test_rotor_stuck_reported_from_device_events(client):
+    """A jammed rotor is a hard no-feed and must not read as healthy."""
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert res[0]["rotor_stuck"] is False
+    client.device_events = AsyncMock(return_value=_stuck_event())
+    res = await tools.feeder_status(cfg(), client, "ferris")
+    assert res[0]["rotor_stuck"] is True

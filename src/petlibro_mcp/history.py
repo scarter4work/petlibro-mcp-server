@@ -101,6 +101,29 @@ def parse_events(days: list[dict] | None) -> list[Event]:
     return out
 
 
+def hopper_warned_on_last_dispense(days: list[dict] | None) -> bool | None:
+    """Did the most recent dispense carry the hopper-running-out warning?
+
+    The firmware reports a low hopper by tagging the dispense record itself:
+    the food is still delivered (``actualGrainNum == expectGrainNum``), so the
+    eventType is the only thing that says anything is wrong. Judging only the
+    LATEST dispense makes this self-clearing — the first feed after a refill
+    comes back as a plain success. Returns None when there is no dispense to
+    judge.
+    """
+    latest_at: int | None = None
+    warned: bool | None = None
+    for day in days or []:
+        for w in day.get("workRecords", []):
+            if w.get("type") != _DISPENSE_TYPE:
+                continue
+            at_ms = int(w.get("recordTime") or 0)
+            if latest_at is None or at_ms > latest_at:
+                latest_at = at_ms
+                warned = w.get("eventType") in _GRAIN_LOW_EVENTS
+    return warned
+
+
 def parse_work_record(days: list[dict] | None) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
     """Split day-grouped workRecords into (eats, dispenses) event series.
 

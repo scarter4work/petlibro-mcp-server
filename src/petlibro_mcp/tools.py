@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .config import Config, cups_to_portions, UnknownPetError
 from .client import PetLibroClient
-from .history import parse_events, parse_work_record
+from .history import (parse_events, parse_work_record,
+                      hopper_warned_on_last_dispense)
 from .rhythm import circadian_curve, find_peaks, split_at_peaks
 from .planner import plan_rows
 from .schedule_diff import diff_schedule
@@ -94,22 +95,56 @@ async def open_lid(config: Config, client: PetLibroClient, pets) -> list[dict]:
     return results
 
 
-def _food_low(info: dict) -> bool | None:
+async def _quiet(awaitable):
+    """Await a supplementary signal, yielding None if it fails.
+
+    The hopper alerts are additions to feeder_status, not its purpose: a cloud
+    hiccup fetching events must not turn a working status call into an error
+    that tells the user nothing about their cat.
+    """
+    try:
+        return await awaitable
+    except Exception:
+        return None
+
+
+LOW_FOOD_EVENT = "SURPLUS_GRAIN_NOT_ENOUGH"
+STUCK_ROTOR_EVENT = "FEEDING_FAILED_BY_STUCK_GRAIN"
+
+
+def _event_keys(events: object) -> set[str]:
+    """Event keys currently raised by the device, from deviceEventsV2."""
+    if not isinstance(events, dict):
+        return set()
+    infos = events.get("eventInfos") or []
+    return {e.get("eventKey") for e in infos if isinstance(e, dict)}
+
+
+def _food_low(info: dict, event_keys: set[str],
+              warned_on_last_dispense: bool | None) -> bool | None:
     """True when the hopper is running low.
 
-    Prefer the explicit hopper enum ``warehouseSurplusGrain`` ("GOOD" = plenty;
-    any other value = running out). Fall back to negating the top-level
-    ``surplusGrain`` boolean if the enum is absent. Returns None if neither
-    field is present, rather than guessing. NOTE: this used to map straight to
-    ``surplusGrain`` (inverted — reported food_low=True when food was present).
+    The live-status fields cannot be trusted for this: an empty hopper still
+    reports ``warehouseSurplusGrain: "GOOD"`` and ``surplusGrain: True`` while
+    the device itself displays "add food" (observed on zeus 2026-07-16, and on
+    ferris + colby for two days up to 2026-08-30). So ask the firmware's own
+    alerts first — the deviceEventsV2 low-food event, then the warning the
+    firmware tags onto the last dispense record — and only fall back to the
+    status enum, which can report low but never reliably reports empty.
     """
+    if LOW_FOOD_EVENT in event_keys:
+        return True
+    if warned_on_last_dispense:
+        return True
     warehouse = info.get("warehouseSurplusGrain")
-    if warehouse is not None:
-        return warehouse != "GOOD"
+    if warehouse is not None and warehouse != "GOOD":
+        return True
     surplus = info.get("surplusGrain")
-    if surplus is not None:
-        return not surplus
-    return None
+    if surplus is not None and not surplus:
+        return True
+    if warehouse is not None or surplus is not None:
+        return False
+    return False if warned_on_last_dispense is False else None
 
 
 async def feeder_status(config: Config, client: PetLibroClient,
@@ -122,10 +157,14 @@ async def feeder_status(config: Config, client: PetLibroClient,
     for f in feeders:
         try:
             info = await client.real_info(f.serial)
+            keys = _event_keys(await _quiet(client.device_events(f.serial)))
+            warned = hopper_warned_on_last_dispense(
+                await _quiet(client.work_record(f.serial, days=2, size=100)))
             results.append({
                 "pet": f.name, "serial": f.serial,
                 "online": info.get("online"),
-                "food_low": _food_low(info),
+                "food_low": _food_low(info, keys, warned),
+                "rotor_stuck": STUCK_ROTOR_EVENT in keys,
                 "battery": info.get("batteryState"),
                 "today_feeding_quantity": info.get("todayFeedingQuantity"),
                 "raw": info,
