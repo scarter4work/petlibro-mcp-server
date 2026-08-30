@@ -81,7 +81,7 @@
   .sidebar-foot{padding:14px 20px 0; font-size:11px; color:var(--sidebar-ink-soft); border-top:1px solid var(--sidebar-line); margin-top:8px;}
 
   /* ---------- Main ---------- */
-  #main{flex:1; min-width:0; padding:28px 34px 60px; max-width:980px;}
+  #main{flex:1; min-width:0; padding:28px 34px 60px; max-width:980px; margin-inline:auto;}
   .banner{
     display:flex; gap:10px; align-items:flex-start; padding:13px 16px; border-radius:var(--radius-sm);
     margin-bottom:18px; font-size:14px; line-height:1.45;
@@ -246,7 +246,9 @@
     .pet-row{border-left:0; border-bottom:3px solid transparent; white-space:nowrap;}
     .pet-row.active{border-bottom-color:var(--gold);}
     .sidebar-foot{display:none;}
-    #main{padding:22px 18px 50px;}
+    /* column layout: width is the cross axis, where auto margins would
+       cancel stretch and shrink-wrap the column to its content */
+    #main{padding:22px 18px 50px; margin-inline:0;}
   }
 </style>
 </head>
