@@ -19,6 +19,32 @@ _STATIC = Path(__file__).resolve().parent / "static"
 _LOGGER = logging.getLogger("webui")
 
 
+def configure_logging(level: str | None = None) -> logging.Logger:
+    """Send our own loggers to stderr, which is where journald reads.
+
+    uvicorn configures only its own loggers and leaves the root logger bare, so
+    without this every _LOGGER call in the poller vanishes — the service can be
+    failing every 15 minutes with an empty `journalctl`. Attaching to the
+    package logger rather than root leaves uvicorn's access-log formatting
+    alone.
+
+    Idempotent: repeated calls (reload, tests) must not stack handlers and
+    duplicate every line.
+    """
+    lvl = (level or os.environ.get("PETLIBRO_LOG_LEVEL") or "INFO").upper()
+    for name in ("petlibro_mcp", "webui"):
+        log = logging.getLogger(name)
+        log.setLevel(lvl)
+        if not any(getattr(h, "_petlibro", False) for h in log.handlers):
+            handler = logging.StreamHandler()  # stderr -> journald
+            handler.setFormatter(logging.Formatter(
+                "%(levelname)s %(name)s: %(message)s"))
+            handler._petlibro = True  # type: ignore[attr-defined]
+            log.addHandler(handler)
+        log.propagate = False
+    return logging.getLogger("petlibro_mcp")
+
+
 def db_path() -> Path:
     """Where the event store lives.
 
@@ -112,6 +138,7 @@ def build_app(config, client, conn=None, poll: bool = False) -> FastAPI:
 
 
 def create_app() -> FastAPI:
+    configure_logging()
     _load_env_file()
     config = load_config(PETS_TOML)
     return build_app(config, PetLibroClient(config),
