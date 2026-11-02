@@ -95,6 +95,70 @@ async def open_lid(config: Config, client: PetLibroClient, pets) -> list[dict]:
     return results
 
 
+UNJAM_DEFAULT_PULSES = 3
+UNJAM_MAX_PULSES = 6
+UNJAM_INTERVAL_S = 15        # let each cycle finish before the next
+UNJAM_BUSY_RETRY_S = 5       # wait while the feeder answers "Feeding... retry later"
+UNJAM_BUSY_RETRIES = 12      # ~60 s of busy before giving up on a pulse
+
+
+def _is_busy(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "2002" in msg or "2028" in msg or "retry later" in msg
+
+
+async def unjam(config: Config, client: PetLibroClient, pets,
+                pulses: int = UNJAM_DEFAULT_PULSES, sleep=None) -> list[dict]:
+    """Clear a stuck rotor with forward zero-portion pulses (no food dispensed).
+
+    There is no reverse in the cloud API, so this is the only motor action
+    available remotely. Reports the feeder's state afterwards; a stuck-rotor
+    event that persists means the jam needs clearing by hand.
+    """
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    try:
+        feeders = config.resolve_feeders(pets)
+    except UnknownPetError as e:
+        return [{"pet": None, "ok": False, "error": str(e)}]
+    if not 1 <= pulses <= UNJAM_MAX_PULSES:
+        return [{"pet": None, "ok": False,
+                 "error": f"pulses must be 1..{UNJAM_MAX_PULSES} (got {pulses})."}]
+
+    results = []
+    for f in feeders:
+        item = {"pet": f.name, "serial": f.serial, "pulses_sent": 0,
+                "ok": True, "error": None}
+        for i in range(pulses):
+            if i:
+                await sleep(UNJAM_INTERVAL_S)
+            for attempt in range(UNJAM_BUSY_RETRIES + 1):
+                try:
+                    await client.pulse(f.serial)
+                    item["pulses_sent"] += 1
+                    break
+                except Exception as exc:
+                    if _is_busy(exc) and attempt < UNJAM_BUSY_RETRIES:
+                        await sleep(UNJAM_BUSY_RETRY_S)
+                        continue
+                    item["ok"] = False
+                    item["error"] = (f"feeder still busy after {UNJAM_BUSY_RETRIES} retries: {exc}"
+                                     if _is_busy(exc) else f"{type(exc).__name__}: {exc}")
+                    break
+            if not item["ok"]:
+                break
+        info = await _quiet(client.real_info(f.serial)) or {}
+        keys = _event_keys(await _quiet(client.device_events(f.serial)))
+        item.update({
+            "rotor_stuck": STUCK_ROTOR_EVENT in keys,
+            "running_state": info.get("runningState"),
+            "error_state": info.get("errorState"),
+            "stopped_working": info.get("deviceStoppedWorking"),
+        })
+        results.append(item)
+    return results
+
+
 async def _quiet(awaitable):
     """Await a supplementary signal, yielding None if it fails.
 

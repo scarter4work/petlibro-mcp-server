@@ -631,3 +631,70 @@ async def test_rotor_stuck_reported_from_device_events(client):
     client.device_events = AsyncMock(return_value=_stuck_event())
     res = await tools.feeder_status(cfg(), client, "ferris")
     assert res[0]["rotor_stuck"] is True
+
+
+# --- unjam: forward zero-portion pulses (the cloud API has no reverse) ---
+
+class _Busy(Exception):
+    pass
+
+
+def _no_sleep():
+    calls = []
+
+    async def sleep(s):
+        calls.append(s)
+    return sleep, calls
+
+
+async def test_unjam_sends_requested_pulses_and_reports_state(client):
+    client.pulse = AsyncMock(return_value=None)
+    sleep, waits = _no_sleep()
+    res = await tools.unjam(cfg(), client, ["zeus"], pulses=3, sleep=sleep)
+    assert client.pulse.await_count == 3
+    client.pulse.assert_awaited_with("SN-Z")
+    assert res[0]["pet"] == "zeus" and res[0]["ok"] is True
+    assert res[0]["pulses_sent"] == 3
+    assert "rotor_stuck" in res[0] and "running_state" in res[0]
+    assert len([w for w in waits if w == tools.UNJAM_INTERVAL_S]) == 2  # between pulses only
+
+
+async def test_unjam_waits_out_busy_lock_then_continues(client):
+    client.pulse = AsyncMock(side_effect=[
+        None, _Busy("Code: 2028, Message: Feeding... Please retry later."), None])
+    sleep, waits = _no_sleep()
+    res = await tools.unjam(cfg(), client, ["zeus"], pulses=2, sleep=sleep)
+    assert res[0]["ok"] is True and res[0]["pulses_sent"] == 2
+    assert tools.UNJAM_BUSY_RETRY_S in waits
+
+
+async def test_unjam_gives_up_on_persistent_busy_and_says_so(client):
+    client.pulse = AsyncMock(side_effect=_Busy("Code: 2002, Message: Feeding... Please retry later."))
+    sleep, _ = _no_sleep()
+    res = await tools.unjam(cfg(), client, ["zeus"], pulses=2, sleep=sleep)
+    assert res[0]["ok"] is False
+    assert res[0]["pulses_sent"] == 0
+    assert "busy" in res[0]["error"].lower()
+
+
+async def test_unjam_surfaces_real_errors_without_retrying(client):
+    client.pulse = AsyncMock(side_effect=RuntimeError("offline"))
+    sleep, _ = _no_sleep()
+    res = await tools.unjam(cfg(), client, ["zeus"], pulses=3, sleep=sleep)
+    assert res[0]["ok"] is False and "offline" in res[0]["error"]
+    assert client.pulse.await_count == 1
+
+
+async def test_unjam_refuses_out_of_range_pulse_counts(client):
+    client.pulse = AsyncMock(return_value=None)
+    for n in (0, tools.UNJAM_MAX_PULSES + 1):
+        res = await tools.unjam(cfg(), client, ["zeus"], pulses=n)
+        assert res[0]["ok"] is False
+    client.pulse.assert_not_awaited()
+
+
+async def test_unjam_unknown_pet_reports_error(client):
+    client.pulse = AsyncMock(return_value=None)
+    res = await tools.unjam(cfg(), client, ["mittens"])
+    assert res[0]["ok"] is False
+    client.pulse.assert_not_awaited()
