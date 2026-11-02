@@ -127,13 +127,3 @@ async def test_device_events_logs_in_then_fetches(api):
     api.login.assert_awaited_once()
     api.device_events.assert_awaited_once_with("SN-FERRIS")
     assert out == {"eventInfos": []}
-
-
-async def test_pulse_is_a_zero_portion_manual_feed():
-    from unittest.mock import AsyncMock, MagicMock
-    from petlibro_mcp.client import PetLibroClient
-    api = MagicMock()
-    api.login = AsyncMock(); api.set_manual_feed = AsyncMock(return_value=3)
-    c = PetLibroClient(MagicMock(email="a", password="b", region="US"), api=api)
-    await c.pulse("SN-Z")
-    api.set_manual_feed.assert_awaited_once_with("SN-Z", 0)

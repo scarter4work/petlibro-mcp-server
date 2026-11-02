@@ -24,15 +24,6 @@ class PetLibroClient:
         await self.ensure_login()
         await self._api.set_manual_feed(serial, portions)
 
-    async def pulse(self, serial: str) -> None:
-        """Spin the rotor forward once without dispensing a portion.
-
-        The cloud API has no reverse; a zero-grain manual feed is accepted
-        (resp 3) and still engages the motor, which clears kibble bridging.
-        """
-        await self.ensure_login()
-        await self._api.set_manual_feed(serial, 0)
-
     async def open_lid(self, serial: str) -> None:
         await self.ensure_login()
         await self._api.set_manual_lid_open(serial)
