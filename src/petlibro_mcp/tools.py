@@ -1,5 +1,6 @@
 """MCP tool logic: resolve, guard, call the facade, shape results."""
 from __future__ import annotations
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from .config import Config, cups_to_portions, UnknownPetError
@@ -93,6 +94,94 @@ async def open_lid(config: Config, client: PetLibroClient, pets) -> list[dict]:
             item["error"] = f"{type(exc).__name__}: {exc}"
         results.append(item)
     return results
+
+
+UNJAM_DEFAULT_PULSES = 3
+UNJAM_MAX_PULSES = 6
+UNJAM_INTERVAL_S = 15        # let each cycle finish before the next
+UNJAM_BUSY_RETRY_S = 5       # wait while the feeder answers "Feeding... retry later"
+UNJAM_BUSY_RETRIES = 12      # ~60 s of busy before giving up on a pulse
+UNJAM_SETTLE_S = 20          # work records land a few seconds after the cycle
+
+
+def _is_busy(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "2002" in msg or "2028" in msg or "retry later" in msg
+
+
+async def unjam(config: Config, client: PetLibroClient, pets,
+                pulses: int = UNJAM_DEFAULT_PULSES, sleep=None) -> list[dict]:
+    """Try to clear a stuck rotor with forward zero-portion manual feeds.
+
+    There is no reverse in the cloud API, so this is the only motor action
+    available remotely. A free rotor dispenses about one portion per pulse
+    despite the zero (2026-11-03: expect 0, actual 1, three times), and a stuck
+    one dispenses nothing (2026-11-02: actual 0). So the work record decides
+    rotor_moved; rotor_stuck has read false on a jammed feeder. rotor_moved
+    false means the jam needs clearing by hand.
+    """
+    import asyncio
+    sleep = sleep or asyncio.sleep
+    try:
+        feeders = config.resolve_feeders(pets)
+    except UnknownPetError as e:
+        return [{"pet": None, "ok": False, "error": str(e)}]
+    if not 1 <= pulses <= UNJAM_MAX_PULSES:
+        return [{"pet": None, "ok": False,
+                 "error": f"pulses must be 1..{UNJAM_MAX_PULSES} (got {pulses})."}]
+
+    results = []
+    for f in feeders:
+        item = {"pet": f.name, "serial": f.serial, "pulses_sent": 0,
+                "ok": True, "error": None}
+        started_ms = int(time.time() * 1000) - 5000
+        for i in range(pulses):
+            if i:
+                await sleep(UNJAM_INTERVAL_S)
+            for attempt in range(UNJAM_BUSY_RETRIES + 1):
+                try:
+                    await client.pulse(f.serial)
+                    item["pulses_sent"] += 1
+                    break
+                except Exception as exc:
+                    if _is_busy(exc) and attempt < UNJAM_BUSY_RETRIES:
+                        await sleep(UNJAM_BUSY_RETRY_S)
+                        continue
+                    item["ok"] = False
+                    item["error"] = (f"feeder still busy after {UNJAM_BUSY_RETRIES} retries: {exc}"
+                                     if _is_busy(exc) else f"{type(exc).__name__}: {exc}")
+                    break
+            if not item["ok"]:
+                break
+        if item["pulses_sent"]:
+            await sleep(UNJAM_SETTLE_S)
+        info = await _quiet(client.real_info(f.serial)) or {}
+        keys = _event_keys(await _quiet(client.device_events(f.serial)))
+        dispensed = _portions_since(
+            await _quiet(client.work_record(f.serial, days=1, size=50)), started_ms)
+        item.update({
+            "portions_dispensed": dispensed,
+            "rotor_moved": None if dispensed is None else dispensed > 0,
+            "rotor_stuck": STUCK_ROTOR_EVENT in keys,
+            "running_state": info.get("runningState"),
+            "error_state": info.get("errorState"),
+            "stopped_working": info.get("deviceStoppedWorking"),
+        })
+        results.append(item)
+    return results
+
+
+def _portions_since(days: object, since_ms: int) -> int | None:
+    """Portions the work record says came out since since_ms; None if unreadable."""
+    if not isinstance(days, list):
+        return None
+    return sum(
+        r.get("actualGrainNum") or 0
+        for day in days if isinstance(day, dict)
+        for r in day.get("workRecords") or []
+        if r.get("eventType") == "MANUAL_FEEDING_SUCCESS"
+        and (r.get("recordTime") or 0) >= since_ms
+    )
 
 
 async def _quiet(awaitable):

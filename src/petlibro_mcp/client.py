@@ -24,6 +24,15 @@ class PetLibroClient:
         await self.ensure_login()
         await self._api.set_manual_feed(serial, portions)
 
+    async def pulse(self, serial: str) -> None:
+        """Send a zero-portion manual feed, which runs the rotor forward.
+
+        The cloud API has no reverse. A free rotor still drops about one
+        portion; see tools.unjam for what the result does and doesn't prove.
+        """
+        await self.ensure_login()
+        await self._api.set_manual_feed(serial, 0)
+
     async def open_lid(self, serial: str) -> None:
         await self.ensure_login()
         await self._api.set_manual_lid_open(serial)

@@ -48,6 +48,26 @@ TOOL_DEFS = [
         },
     ),
     Tool(
+        name="unjam",
+        description=("Try to clear a stuck feeder rotor with forward zero-portion "
+                     "manual feeds (the API has no reverse). A free rotor drops "
+                     "about one portion per pulse. 'pets' is a list of names or "
+                     "\"all\"; 'pulses' 1-6, default 3, ~15 s apart. Reports "
+                     "rotor_moved and portions_dispensed from the work record; "
+                     "rotor_moved false means clear it by hand."),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "pets": {"oneOf": [
+                    {"type": "array", "items": {"type": "string"}},
+                    {"type": "string"}]},
+                "pulses": {"type": "integer", "minimum": 1, "maximum": 6,
+                           "default": 3},
+            },
+            "required": ["pets"],
+        },
+    ),
+    Tool(
         name="feeder_status",
         description="Feeder status (food/battery/online/today). Omit 'pet' for all.",
         inputSchema={"type": "object",
@@ -113,6 +133,9 @@ def build_server(config, client: PetLibroClient) -> Server:
                                   a.get("force", False))
         elif name == "open_lid":
             result = await T.open_lid(config, client, a["pets"])
+        elif name == "unjam":
+            result = await T.unjam(config, client, a["pets"],
+                                   a.get("pulses", T.UNJAM_DEFAULT_PULSES))
         elif name == "feeder_status":
             result = await T.feeder_status(config, client, a.get("pet"))
         elif name == "fountain_status":
